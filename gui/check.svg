@@ -1,3 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
-  <polyline points="2,6 5,9.5 10,2.5" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><polyline fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="2 6 5 9.5 10 2.5"/></svg>
