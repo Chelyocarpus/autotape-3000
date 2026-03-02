@@ -11,7 +11,7 @@ A desktop audio recorder for Windows with media player auto-recording, real-time
 
 - **Audio recording** — capture from any input device (including virtual cables like VB-CABLE) with configurable sample rate, channels, and bit depth (16-bit, 24-bit, 32-bit float).
 - **Media player auto-record** — automatically starts and stops recordings on track changes using the Windows Global System Media Transport Controls (GSMTC) API. Works with any GSMTC-registered media player. Each recording is named after the track being played.
-- **WAV-to-MP3 conversion** — optional post-save conversion via LAME, with configurable bitrate (96–320 kbps) and quality presets. MP3 files are tagged with artist, title, album, and cover art (ID3).
+- **WAV-to-MP3 conversion** — optional post-save conversion via LAME, with configurable bitrate (96–320 kbps) and quality presets. When using the Spotify Desktop App, MP3 files are tagged with artist, title, album, and cover art (ID3).
 - **Cover art** — pulled automatically from the GSMTC thumbnail stream or manually selected via a fullscreen region picker.
 - **Real-time waveform visualization** — displays a smooth, scrolling RMS waveform in real time during recording, providing immediate visual feedback on audio levels and activity.
 - **Minimum duration filter** — recordings shorter than a configurable threshold are automatically discarded.
@@ -45,7 +45,7 @@ python main.py
 gravity/
 ├── main.py                  # Entry point
 ├── requirements.txt
-├── gravity_recorder.json    # Persisted settings (auto-generated)
+├── settings.json            # Persisted settings (auto-generated)
 ├── core/
 │   ├── recorder.py          # Audio capture (sounddevice / soundfile)
 │   └── converter.py         # WAV-to-MP3 conversion (lameenc / mutagen)
