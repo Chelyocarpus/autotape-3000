@@ -1,0 +1,20 @@
+# Core audio
+sounddevice>=0.4.7
+soundfile>=0.12.1
+numpy>=1.26.0
+
+# MP3 encoding and tagging
+lameenc>=1.7.0
+mutagen>=1.47.0
+
+# GUI
+PyQt6>=6.7.0
+
+# Image handling
+Pillow>=10.3.0
+
+# Windows GSMTC (Spotify integration) - Windows only
+winrt-runtime>=2.0.0
+winrt-Windows.Media.Control>=2.0.0
+winrt-Windows.Storage.Streams>=2.0.0
+winrt-Windows.Foundation>=2.0.0

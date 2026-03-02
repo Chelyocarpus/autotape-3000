@@ -1,0 +1,15 @@
+{
+  "device_name": "CABLE Output (VB-Audio Virtual Cable)",
+  "samplerate": 48000,
+  "channels": 2,
+  "bit_depth": "24-bit",
+  "min_dur_min": 0,
+  "min_dur_sec": 0,
+  "convert_mp3": true,
+  "mp3_bitrate": 160,
+  "mp3_quality": "Best (slowest)",
+  "output_folder": "D:/Music",
+  "auto_record": true,
+  "cover_region_bbox": null,
+  "use_song_cover": false
+}
