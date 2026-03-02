@@ -63,14 +63,21 @@ from services.media_session import (
     _GSMTC_AVAILABLE,
     run_gsmtc_watcher,
 )
-from utils.filename import COVER_THUMB_SIZE, _sanitize_filename
+from utils.filename import (
+    COVER_THUMB_SIZE,
+    DEFAULT_DUPLICATE_MODE,
+    DUPLICATE_MODE_LABELS,
+    DUPLICATE_MODES,
+    _sanitize_filename,
+    resolve_output_path,
+)
 
 SAMPLE_RATES = [22050, 44100, 48000, 96000]
 CHANNEL_OPTIONS = [1, 2]
 
 WINDOW_TITLE = "Autotape 3000"
 WINDOW_WIDTH = 520
-WINDOW_HEIGHT = 750   # expanded for split sections
+WINDOW_HEIGHT = 800   # expanded for split sections
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "settings.json")
 
@@ -97,6 +104,7 @@ class RecorderApp(QMainWindow):
         self._last_thumbnail_bytes: bytes | None = None
 
         self._output_filename: str = "recording.wav"
+        self._duplicate_mode: str = DEFAULT_DUPLICATE_MODE
 
         self._media_last_title: str | None = None
         self._media_watcher_stop = threading.Event()
@@ -323,20 +331,35 @@ class RecorderApp(QMainWindow):
 
     def _build_auto_record_section(self) -> QGroupBox:
         box = QGroupBox("Auto-Record")
-        row = QHBoxLayout(box)
-        row.setContentsMargins(8, 8, 8, 8)
+        col = QVBoxLayout(box)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(6)
 
+        row1 = QHBoxLayout()
         self._auto_record_chk = QCheckBox("Auto-record tracks")
         self._auto_record_chk.setEnabled(_GSMTC_AVAILABLE)
         self._auto_record_chk.stateChanged.connect(self._on_auto_record_toggle)
-        row.addWidget(self._auto_record_chk)
+        row1.addWidget(self._auto_record_chk)
 
         self._media_status_lbl = QLabel(
             "Not available (winsdk missing)" if not _GSMTC_AVAILABLE else "Idle"
         )
         self._media_status_lbl.setObjectName("subtext")
-        row.addWidget(self._media_status_lbl)
-        row.addStretch()
+        row1.addWidget(self._media_status_lbl)
+        row1.addStretch()
+        col.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(self._subtext_label("If duplicate:"))
+        self._duplicate_mode_combo = QComboBox()
+        self._duplicate_mode_combo.addItems([DUPLICATE_MODE_LABELS[m] for m in DUPLICATE_MODES])
+        self._duplicate_mode_combo.setCurrentText(DUPLICATE_MODE_LABELS[DEFAULT_DUPLICATE_MODE])
+        self._duplicate_mode_combo.setFixedWidth(130)
+        self._duplicate_mode_combo.currentIndexChanged.connect(self._on_duplicate_mode_changed)
+        row2.addWidget(self._duplicate_mode_combo)
+        row2.addStretch()
+        col.addLayout(row2)
+
         return box
 
     def _build_controls_section(self) -> QWidget:
@@ -475,6 +498,9 @@ class RecorderApp(QMainWindow):
         cover_art = self._cover_art_bytes
         recorder = self._recorder
 
+        duplicate_mode = self._duplicate_mode
+        output_stem = os.path.splitext(os.path.basename(output_path))[0]
+
         def _save() -> None:
             try:
                 audio = recorder.stop()
@@ -482,9 +508,14 @@ class RecorderApp(QMainWindow):
                 if min_duration_s > 0 and duration < min_duration_s:
                     QTimer.singleShot(0, lambda: self._on_save_skipped(duration, min_duration_s))
                     return
-                recorder.save(audio, output_path)
                 if convert_mp3:
-                    mp3_path = os.path.splitext(output_path)[0] + ".mp3"
+                    final_ext = ".mp3"
+                    resolved_mp3 = resolve_output_path(output_folder, output_stem, final_ext, duplicate_mode)
+                    if resolved_mp3 is None:
+                        QTimer.singleShot(0, lambda: self._on_save_skipped_duplicate(output_stem))
+                        return
+                    recorder.save(audio, output_path)
+                    mp3_path = resolved_mp3
                     convert_wav_to_mp3(output_path, mp3_path, mp3_bitrate, mp3_quality)
                     if track_display:
                         parts = track_display.split(" - ", 1)
@@ -497,9 +528,14 @@ class RecorderApp(QMainWindow):
                         os.remove(output_path)
                     except OSError:
                         pass
-                    QTimer.singleShot(0, lambda: self._on_save_complete(mp3_path, duration))
+                    QTimer.singleShot(0, lambda p=mp3_path: self._on_save_complete(p, duration))
                 else:
-                    QTimer.singleShot(0, lambda: self._on_save_complete(output_path, duration))
+                    resolved_wav = resolve_output_path(output_folder, output_stem, ".wav", duplicate_mode)
+                    if resolved_wav is None:
+                        QTimer.singleShot(0, lambda: self._on_save_skipped_duplicate(output_stem))
+                        return
+                    recorder.save(audio, resolved_wav)
+                    QTimer.singleShot(0, lambda p=resolved_wav: self._on_save_complete(p, duration))
             except Exception as exc:  # noqa: BLE001
                 err = str(exc)
                 QTimer.singleShot(0, lambda: self._on_save_error(err))
@@ -560,6 +596,13 @@ class RecorderApp(QMainWindow):
             self._record_btn.setEnabled(True)
         mins, secs = divmod(min_duration_s, 60)
         self._status(f"Skipped \u2014 {duration:.1f}s is shorter than minimum {mins:02d}:{secs:02d}")
+
+    def _on_save_skipped_duplicate(self, stem: str) -> None:
+        if not self._recording and not self._media_pending_start:
+            self._record_btn.setText("Start Recording")
+            self._set_record_btn_idle()
+            self._record_btn.setEnabled(True)
+        self._status(f"Skipped duplicate \u2014 {stem} already exists")
 
     def _on_save_error(self, error: str) -> None:
         self._record_btn.setText("Start Recording")
@@ -672,6 +715,13 @@ class RecorderApp(QMainWindow):
         else:
             self._stop_media_watcher()
 
+    def _on_duplicate_mode_changed(self) -> None:
+        label = self._duplicate_mode_combo.currentText()
+        self._duplicate_mode = next(
+            (m for m, lbl in DUPLICATE_MODE_LABELS.items() if lbl == label),
+            DEFAULT_DUPLICATE_MODE,
+        )
+
     def _start_media_watcher(self) -> None:
         self._media_last_title = None
         self._media_watcher_stop.clear()
@@ -767,7 +817,19 @@ class RecorderApp(QMainWindow):
             self._stop_recording()
 
         safe_name = _sanitize_filename(display)
-        self._output_filename = f"{safe_name}.wav"
+        output_folder = self._output_edit.text().strip()
+        convert_mp3 = self._convert_mp3_chk.isChecked()
+        final_ext = ".mp3" if convert_mp3 else ".wav"
+        resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
+        if resolved is None:
+            self._status(f"Skipped duplicate: {display}")
+            return
+        if convert_mp3:
+            # Always record as WAV first; the .mp3 path was validated above.
+            self._output_filename = f"{safe_name}.wav"
+        else:
+            # Use the resolved stem (may have " (N)" suffix) directly.
+            self._output_filename = os.path.basename(resolved)
         self._current_track_display = display
         self._current_album = info.get("album_title", "")
         if info.get("thumbnail_bytes"):
@@ -832,6 +894,7 @@ class RecorderApp(QMainWindow):
             "mp3_quality": self._mp3_quality_combo.currentText(),
             "output_folder": self._output_edit.text(),
             "auto_record": self._auto_record_chk.isChecked(),
+            "duplicate_mode": self._duplicate_mode,
             "cover_region_bbox": list(self._cover_region_bbox) if self._cover_region_bbox else None,
             "use_song_cover": self._use_song_cover,
         }
@@ -891,6 +954,9 @@ class RecorderApp(QMainWindow):
                     QTimer.singleShot(200, self._recapture_cover_art)
             except (TypeError, ValueError):
                 pass
+        if (v := _get("duplicate_mode")) is not None and v in DUPLICATE_MODES:
+            self._duplicate_mode = v
+            self._duplicate_mode_combo.setCurrentText(DUPLICATE_MODE_LABELS[v])
         if _get("use_song_cover"):
             self._use_song_cover = True
             self._song_cover_btn.setChecked(True)
