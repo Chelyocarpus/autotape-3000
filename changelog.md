@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-03-02
+
+### Added
+- Duplicate-song handling option in the Auto-Record section. Three modes are available and persisted in settings: **Skip** (do not record if a file with the same name already exists), **Append number** (save as `Title (2)`, `Title (3)`, etc.), and **Overwrite** (replace the existing file). Defaults to *Append number*. The check is performed before recording starts (fast-skip in auto-record mode) and again at save time to guard against races. Works for both WAV and MP3 output.
+
 ## [0.9.2] - 2026-03-02
 
 ### Fixed
