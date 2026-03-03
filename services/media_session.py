@@ -63,7 +63,14 @@ async def _gsmtc_get_media_info() -> dict | None:
         # Prefer the OS-designated current session; fall back to any playing session.
         session = manager.get_current_session()
         if session is None:
-            return None
+            # No OS-designated current session — scan all sessions for one that is playing.
+            for s in manager.get_sessions():
+                pi = s.get_playback_info()
+                if pi.playback_status == _PlaybackStatus.PLAYING:
+                    session = s
+                    break
+            if session is None:
+                return None
         playback_info = session.get_playback_info()
         if playback_info.playback_status != _PlaybackStatus.PLAYING:
             # Current session is paused — check other sessions for one that is playing.

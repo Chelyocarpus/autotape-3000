@@ -27,7 +27,7 @@ Unlike playlist downloaders that grab tracks from sources like YouTube, Autotape
 - **Consistent quality:** Recordings are made at the original playback quality, not limited by YouTube's compression or variable sources.
 - **Metadata and cover art:** When supported, tracks are tagged with the correct artist, title, album, and artwork as played.
 
-Playlist downloaders can't guarantee the track will be the exact version you want, and all downloads are subject to the quality and metadata available on sources like Youtube. Autotape 3000 ensures your recordings match your actual listening experience.
+Playlist downloaders can't guarantee the track will be the exact version you want, and all downloads are subject to the quality and metadata available on sources like YouTube. Autotape 3000 ensures your recordings match your actual listening experience.
 
 **Trade-off:** Autotape 3000 records in real time - capturing a 4-minute song takes 4 minutes. While slower than downloading, this approach ensures you get the exact version and quality you hear in your media player. Just let it run in the background while you enjoy your music; no extra interaction is needed.
 
