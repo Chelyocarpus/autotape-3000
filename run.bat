@@ -19,6 +19,15 @@ if errorlevel 1 (
 set STAMP_FILE=%~dp0.deps_hash
 set REQ_FILE=%~dp0requirements.txt
 
+if not exist "%REQ_FILE%" (
+    echo [ERROR] requirements.txt not found at: %REQ_FILE%
+    echo.
+    echo Please ensure requirements.txt is present in the same folder as this script.
+    echo.
+    pause
+    exit /b 1
+)
+
 :: Compute current hash of requirements.txt
 for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%REQ_FILE%" SHA256 2^>nul') do (
     if not defined CURRENT_HASH set CURRENT_HASH=%%H
