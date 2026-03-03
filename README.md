@@ -2,7 +2,6 @@
 
 Autotape 3000 is a Windows desktop audio recorder that automatically captures music from media players and converts it to MP3, with each track saved as a separate file.
 
-
 <div align="center">
     <img src="image.png" alt="alt text" />
 </div>
