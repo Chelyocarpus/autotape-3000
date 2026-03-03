@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-03-03
+
+### Fixed
+- Taskbar now shows the correct app icon on Windows. `SetCurrentProcessExplicitAppUserModelID` is called before the `QApplication` is created in `main.py`, preventing Windows from falling back to the Python interpreter's icon.
+
+## [0.9.5] - 2026-03-03
+
+### Fixed
+- `_gsmtc_get_media_info` now falls back to scanning all GSMTC sessions for an actively playing one when `get_current_session()` returns `None`, restoring the prior behaviour and preventing missed sessions. The OS-designated current session is still preferred when present.
+
+## [0.9.4] - 2026-03-03
+
+### Changed
+- Auto-record is now player-agnostic: the Spotify-only GSMTC filter (`"spotify" in source_app_user_model_id`) has been removed from `services/media_session.py`. The watcher now uses the OS-designated current session (`get_current_session()`) as its primary source, with a fallback that scans all sessions for one that is actively playing. Any GSMTC-capable player (YouTube Music, Apple Music, Tidal, VLC, Winamp, etc.) is now supported automatically.
+- Event subscriptions in the watcher now cover all registered GSMTC sessions instead of only Spotify, so track-change events fire regardless of which player is in use.
+
 ## [0.9.3] - 2026-03-02
 
 ### Added
