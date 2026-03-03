@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-03-03
+
+### Changed
+- Styled scrollbars to match the dark theme: slim 8 px track with no arrow buttons, rounded handle using `COLOR_BORDER`, brightening to `COLOR_SUBTEXT` on hover. Applied to both vertical and horizontal axes.
+
+## [1.0.7] - 2026-03-03
+
+### Changed
+- Removed the Path column from the Log tab. The track name column now stretches to fill the full available width.
+
+## [1.0.6] - 2026-03-03
+
+### Fixed
+- Alternate (even) rows in the Log table had no hover highlight or selection highlight. The `QTableWidget::item:alternate` stylesheet rule has higher CSS specificity than the widget-level `selection-background-color` property, so Qt silently ignored hover and selection for those rows. Added explicit `::item:hover`, `::item:selected`, `::item:alternate:hover`, and `::item:alternate:selected` rules so both row types behave consistently.
+
+## [1.0.5] - 2026-03-03
+
+### Fixed
+- Log tab status cells showing no colour. The stylesheet rule `QTableWidget::item { color: … }` was hard-coding all cell text to the default text colour, overriding the programmatic `setForeground()` call used to colour Saved/Skipped/Error entries. Removed the redundant `color` declarations from the `::item` and `::item:alternate` stylesheet rules; the base `QTableWidget { color: … }` rule already supplies the default colour.
+- Track name being cut off in the Log tab. Both the Track and Path columns were set to `Stretch`, splitting the available width equally. Changed the Path column to `Interactive` with a sensible default width so the Track column receives all remaining stretch space.
+
+## [1.0.4] - 2026-03-03
+
+### Fixed
+- Log tab entries not appearing after recordings were saved or skipped. The save background thread was using `QTimer.singleShot(0, lambda …)` to deliver results to the main thread, which is unreliable in PyQt6 from non-Qt threads. Replaced all five cross-thread callbacks in `_save()` with dedicated `pyqtSignal` emissions (`_sig_save_complete`, `_sig_save_skipped`, `_sig_save_skipped_duplicate`, `_sig_save_error`, `_sig_ensure_btn_ready`), which are the correct PyQt6 mechanism for thread-safe main-thread dispatch.
+
+## [1.0.3] - 2026-03-03
+
+### Added
+- **Log tab** (first tab): a table showing every recording outcome — time, status (Saved / Skipped / Error), track name, duration, and filename. Status cells are colour-coded green/amber/red. Rows are appended automatically after each save attempt.
+- **Track label**: the current song title is displayed prominently above the waveform while recording is active, using the accent colour.
+- **Deferred stop** (auto-record mode): pressing "Stop Recording" once while auto-record is on sets a *Stopping after song…* state (amber button). The recording keeps running and stops automatically when the media player pauses or moves to a new track. A second click stops immediately.
+
+### Changed
+- `_on_save_complete`, `_on_save_skipped`, `_on_save_skipped_duplicate`, and `_on_save_error` each accept an optional `track` parameter so the log always captures the correct title even when the media session has already advanced to the next song.
+- `_on_auto_record_toggle`: disabling auto-record while a deferred stop is pending now triggers an immediate stop instead of leaving the app in an inconsistent state.
+- Added `COLOR_WARNING` / `_WARNING_HOVER` (amber) and `QLabel#trackLabel`, `QTableWidget`, `QHeaderView` styles to the theme stylesheet.
+
+## [1.0.2] - 2026-03-03
+
+### Changed
+- Extracted duplicate handling out of the Auto-Record group box into its own "Duplicate Handling" group box on the Automation tab.
+
+## [1.0.1] - 2026-03-03
+
+### Changed
+- Moved "Minimum Duration" from the Export tab's Audio Format section into a dedicated group box on the Automation tab, where it sits logically alongside auto-record and duplicate-handling settings.
+
+## [1.0.0] - 2026-03-03
+
+### Changed
+- Restructured the main window UI around a `QTabWidget` with three tabs:
+  - **Record** — audio device selection and output folder.
+  - **Export** — audio format options, MP3 export settings, and cover art.
+  - **Automation** — auto-record and duplicate-handling settings.
+- Waveform visualiser and recording controls remain always visible below the tab area.
+- Reduced window height from 800 px to 580 px to match the new compact layout.
+- Added `QTabBar` / `QTabWidget` styling to the theme stylesheet to match the existing dark indigo palette.
+
+## [0.9.9] - 2026-03-03
+
+### Changed
+- `run.bat` now shows an animated spinner (`[-]`, `[\]`, `[|]`, `[/]`) in-place on the same console line while dependencies are being installed, replacing the static "Installing dependencies..." message.
+
+## [0.9.8] - 2026-03-03
+
+### Added
+- `run.bat` launcher script — double-click to install dependencies and start the app without any manual setup steps.
+
+### Changed
+- `run.bat` now skips `pip install` when `requirements.txt` has not changed since the last run. A SHA-256 hash of `requirements.txt` is stored in `.deps_hash` next to the script and compared on each launch; dependencies are only reinstalled when the file actually changes.
+
+## [0.9.7] - 2026-03-03
+
+### Fixed
+- Spinner (QSpinBox) up/down arrow buttons were invisible. Styling `::up-button` / `::down-button` in Qt removes the default OS arrows; added explicit `::up-arrow` and `::down-arrow` sub-control rules backed by new `arrow_up.svg` / `arrow_down.svg` assets.
+
 ## [0.9.6] - 2026-03-03
 
 ### Fixed
