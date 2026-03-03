@@ -636,6 +636,7 @@ class RecorderApp(QMainWindow):
             return
 
         self._stop_requested = False
+        self._early_started_recording = False
         self._track_label.setVisible(False)
 
         output_folder = self._output_edit.text().strip()

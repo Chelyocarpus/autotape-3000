@@ -127,9 +127,9 @@ def _get_media_info_sync() -> dict | None:
 # ---------------------------------------------------------------------------
 
 async def _gsmtc_event_watcher(
-    emit_fn: Callable,
+    emit_fn: Callable[[dict | None], None],
     stop_event: threading.Event,
-    on_track_change_fn: Callable | None = None,
+    on_track_change_fn: Callable[[], None] | None = None,
 ) -> None:
     """
     Async event-driven watcher that calls ``emit_fn`` on every track or playback change.
@@ -241,9 +241,9 @@ async def _gsmtc_event_watcher(
 
 
 def run_gsmtc_watcher(
-    emit_fn: Callable,
+    emit_fn: Callable[[dict | None], None],
     stop_event: threading.Event,
-    on_track_change_fn: Callable | None = None,
+    on_track_change_fn: Callable[[], None] | None = None,
 ) -> None:
     """
     Run the GSMTC watcher and block until ``stop_event`` is set.
