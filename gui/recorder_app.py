@@ -101,6 +101,7 @@ class RecorderApp(QMainWindow):
     """PyQt6 main window for audio recording."""
 
     _media_info_ready = pyqtSignal(object)
+    _sig_track_changing = pyqtSignal()  # fires immediately on media_properties_changed, before coalesce
     _waveform_level = pyqtSignal(float)
 
     # Signals used to marshal save-thread results back to the main thread.
@@ -137,6 +138,11 @@ class RecorderApp(QMainWindow):
         self._media_watcher_thread: threading.Thread | None = None
         self._media_pending_start = False
         self._media_pause_timer: QTimer | None = None
+        # Set to True while a recording has been started early (before GSMTC
+        # metadata arrived).  Also used as a transition guard: while True, further
+        # media_properties_changed signals are ignored so rapid follow-up events
+        # (e.g. thumbnail arriving after title) don't kill the new recording.
+        self._early_started_recording: bool = False
 
         self._elapsed_seconds: int = 0
         self._elapsed_timer = QTimer(self)
@@ -144,6 +150,7 @@ class RecorderApp(QMainWindow):
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
 
         self._media_info_ready.connect(self._media_poll)
+        self._sig_track_changing.connect(self._on_track_changing)
         self._sig_save_complete.connect(self._on_save_complete)
         self._sig_save_skipped.connect(self._on_save_skipped)
         self._sig_save_skipped_duplicate.connect(self._on_save_skipped_duplicate)
@@ -624,7 +631,7 @@ class RecorderApp(QMainWindow):
             self._track_label.setVisible(False)
         self._status(f"Recording from: {device.name}")
 
-    def _stop_recording(self) -> None:
+    def _stop_recording(self, *, discard: bool = False) -> None:
         if self._recorder is None or not self._recording:
             return
 
@@ -649,6 +656,8 @@ class RecorderApp(QMainWindow):
         def _save() -> None:
             try:
                 audio = recorder.stop()
+                if discard:
+                    return  # Audio discarded — do not write to disk or emit any log signal.
                 duration = len(audio) / samplerate
                 if min_duration_s > 0 and duration < min_duration_s:
                     self._sig_save_skipped.emit(duration, min_duration_s, track_display or "")
@@ -893,7 +902,73 @@ class RecorderApp(QMainWindow):
         run_gsmtc_watcher(
             emit_fn=self._media_info_ready.emit,
             stop_event=self._media_watcher_stop,
+            on_track_change_fn=self._sig_track_changing.emit,
         )
+
+    def _on_track_changing(self) -> None:
+        """Called immediately when GSMTC fires media_properties_changed, before the
+        coalesce delay and metadata query.
+
+        Stops the current recording right away so no audio bleeds into it from the
+        new song, then immediately starts a new recording with placeholder metadata
+        so the first beat of the new track is captured.  The real track info is
+        applied in-place by _media_poll once the GSMTC metadata has settled."""
+        if not self._auto_record_chk.isChecked():
+            return
+        # Guard: already in a transition — ignore rapid follow-up events (e.g.
+        # thumbnail arriving shortly after the title change).
+        if self._early_started_recording:
+            return
+
+        # Stop the current recording immediately.
+        if self._recording:
+            self._stop_recording()
+
+        # Honor a deferred stop request — do not start a new recording.
+        if self._stop_requested:
+            self._stop_requested = False
+            return
+
+        # Start capturing immediately with placeholder metadata.  Real values are
+        # filled in by _media_poll once the GSMTC query returns.
+        self._current_track_display = None
+        self._current_album = ""
+        self._output_filename = "_pending.wav"
+        self._start_recording()
+        if self._recording:
+            self._early_started_recording = True
+
+    def _apply_metadata_to_recording(self, display: str, info: dict) -> bool:
+        """Update filename and track info on the currently running early-started recording.
+
+        Checks for duplicates first.  Returns True if metadata was applied and the
+        recording should continue, or False if the track is a duplicate and the
+        recording has been discarded.
+        """
+        safe_name = _sanitize_filename(display)
+        output_folder = self._output_edit.text().strip()
+        convert_mp3 = self._convert_mp3_chk.isChecked()
+        final_ext = ".mp3" if convert_mp3 else ".wav"
+        resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
+        if resolved is None:
+            self._stop_recording(discard=True)
+            self._log_entry("Skipped", display, 0.0)
+            self._status(f"Skipped duplicate: {display}")
+            return False
+        if convert_mp3:
+            self._output_filename = f"{safe_name}.wav"
+        else:
+            self._output_filename = os.path.basename(resolved)
+        self._current_track_display = display
+        self._current_album = info.get("album_title", "")
+        if info.get("thumbnail_bytes"):
+            self._apply_gsmtc_cover(info["thumbnail_bytes"])
+        elif self._cover_region_bbox is not None and not self._use_song_cover:
+            QTimer.singleShot(800, self._recapture_cover_art)
+        self._track_label.setText(display)
+        self._track_label.setVisible(True)
+        self._status(f"Recording: {display}")
+        return True
 
     def _media_start_recording(self) -> None:
         self._media_pending_start = False
@@ -949,6 +1024,11 @@ class RecorderApp(QMainWindow):
         self._media_status_lbl.setText(f"Playing: {display}")
 
         if track_key == self._media_last_title:
+            if self._early_started_recording and not is_idle and self._recording:
+                # The early-start fired on a mid-song metadata update (e.g. thumbnail)
+                # rather than a genuine track change.  Update metadata in place.
+                self._early_started_recording = False
+                self._apply_metadata_to_recording(display, info)
             return
 
         self._media_last_title = track_key
@@ -963,6 +1043,17 @@ class RecorderApp(QMainWindow):
 
         # New track is playing — cancel any pending pause-stop and switch.
         self._cancel_pause_stop()
+
+        if self._early_started_recording:
+            # A recording was already started early by _on_track_changing.
+            # Apply real metadata in place instead of doing a stop/restart.
+            self._early_started_recording = False
+            if self._stop_requested:
+                self._stop_requested = False
+                self._stop_recording(discard=True)
+                return
+            self._apply_metadata_to_recording(display, info)
+            return
 
         if self._recording:
             self._stop_recording()

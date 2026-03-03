@@ -19,6 +19,7 @@ back to a simple polling loop.
 
 import asyncio
 import threading
+from collections.abc import Callable
 
 # Fallback poll interval used when GSMTC events are unavailable or as a safety net.
 POLL_INTERVAL_MS = 250
@@ -125,7 +126,11 @@ def _get_media_info_sync() -> dict | None:
 # Event-driven watcher
 # ---------------------------------------------------------------------------
 
-async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -> None:
+async def _gsmtc_event_watcher(
+    emit_fn: Callable,
+    stop_event: threading.Event,
+    on_track_change_fn: Callable | None = None,
+) -> None:
     """
     Async event-driven watcher that calls ``emit_fn`` on every track or playback change.
 
@@ -156,7 +161,17 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
     trigger = asyncio.Event()
     subscribed: list[tuple] = []  # (session, playback_token, props_token)
 
-    def _fire() -> None:
+    def _fire_playback() -> None:
+        """Notify of a playback-state change (pause/resume) — trigger only."""
+        loop.call_soon_threadsafe(trigger.set)
+
+    def _fire_track() -> None:
+        """Notify of a track/metadata change — fire the immediate callback first, then trigger."""
+        if on_track_change_fn is not None:
+            try:
+                on_track_change_fn()
+            except Exception:  # noqa: BLE001
+                pass
         loop.call_soon_threadsafe(trigger.set)
 
     def _subscribe_sessions() -> None:
@@ -172,8 +187,8 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
                 _MediaManager.request_async(), loop
             ).result(timeout=2)
             for s in manager_snapshot.get_sessions():
-                t1 = s.add_playback_info_changed(lambda *_: _fire())
-                t2 = s.add_media_properties_changed(lambda *_: _fire())
+                t1 = s.add_playback_info_changed(lambda *_: _fire_playback())
+                t2 = s.add_media_properties_changed(lambda *_: _fire_track())
                 subscribed.append((s, t1, t2))
         except Exception:  # noqa: BLE001
             pass
@@ -182,14 +197,14 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
 
     def _on_session_changed(sender, args) -> None:  # noqa: ANN001
         loop.call_soon_threadsafe(_subscribe_sessions)
-        _fire()
+        _fire_playback()
 
     mgr_token = manager.add_current_session_changed(_on_session_changed)
 
     # Subscribe to all current sessions and trigger a first query.
     for s in manager.get_sessions():
-        t1 = s.add_playback_info_changed(lambda *_: _fire())
-        t2 = s.add_media_properties_changed(lambda *_: _fire())
+        t1 = s.add_playback_info_changed(lambda *_: _fire_playback())
+        t2 = s.add_media_properties_changed(lambda *_: _fire_track())
         subscribed.append((s, t1, t2))
     trigger.set()
 
@@ -225,7 +240,11 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
                 pass
 
 
-def run_gsmtc_watcher(emit_fn: callable, stop_event: threading.Event) -> None:
+def run_gsmtc_watcher(
+    emit_fn: Callable,
+    stop_event: threading.Event,
+    on_track_change_fn: Callable | None = None,
+) -> None:
     """
     Run the GSMTC watcher and block until ``stop_event`` is set.
 
@@ -252,7 +271,7 @@ def run_gsmtc_watcher(emit_fn: callable, stop_event: threading.Event) -> None:
 
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(_gsmtc_event_watcher(emit_fn, stop_event))
+        loop.run_until_complete(_gsmtc_event_watcher(emit_fn, stop_event, on_track_change_fn))
     except Exception:  # noqa: BLE001
         pass
     finally:
