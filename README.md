@@ -1,6 +1,6 @@
 # Autotape 3000
 
-A desktop audio recorder for Windows with media player auto-recording, real-time waveform visualization, and WAV-to-MP3 conversion.
+Autotape 3000 is a Windows desktop audio recorder that automatically captures music from media players and converts it to MP3, with each track saved as a separate file.
 
 
 <div align="center">
@@ -17,6 +17,20 @@ A desktop audio recorder for Windows with media player auto-recording, real-time
 - **Minimum duration filter** — recordings shorter than a configurable threshold are automatically discarded.
 - **Persistent settings** — all settings are saved to `settings.json` and restored on next launch.
 - **Frameless window** — custom title bar with native Aero Snap support.
+
+
+## Why Autotape 3000
+
+Unlike playlist downloaders that grab tracks from sources like YouTube, Autotape 3000 captures the exact audio you play in your media player - no ads, intros, or unwanted segments. You get a true-to-playback recording, every time. 
+
+- **Track accuracy:** You get the precise version, mix, or edit from your playlist - no mismatches or incorrect tracks.
+- **Consistent quality:** Recordings are made at the original playback quality, not limited by YouTube's compression or variable sources.
+- **Metadata and cover art:** When supported, tracks are tagged with the correct artist, title, album, and artwork as played.
+
+Playlist downloaders can't guarantee the track will be the exact version you want, and all downloads are subject to the quality and metadata available on sources like Youtube. Autotape 3000 ensures your recordings match your actual listening experience.
+
+**Trade-off:** Autotape 3000 records in real time - capturing a 4-minute song takes 4 minutes. While slower than downloading, this approach ensures you get the exact version and quality you hear in your media player. Just let it run in the background while you enjoy your music; no extra interaction is needed.
+
 
 ## Requirements
 
@@ -42,7 +56,7 @@ python main.py
 ## Project Structure
 
 ```
-gravity/
+autotape-3000/
 ├── main.py                  # Entry point
 ├── requirements.txt
 ├── settings.json            # Persisted settings (auto-generated)
@@ -63,18 +77,11 @@ gravity/
 
 ## Usage
 
-### Manual recording
-
-1. Select an input device from the **Device** dropdown.
-2. Configure sample rate, channels, and bit depth as needed.
-3. Set an output file path.
-4. Press **Record** to start and **Stop** to finish.
-
 ### Media player auto-record
 
 1. Enable **Auto-record tracks** in the Media Player section.
-2. Play music in any GSMTC-registered media player — the recorder starts and stops automatically with each track change, saving a file named after the current track.
-3. Cover art is embedded automatically when available via GSMTC. Use **Pick region** as a fallback to manually select a screen area containing the album art.
+2. Play music in any GSMTC-registered media player — the recorder automatically starts and stops with each track change, saving a file named after the current track.
+3. Cover art is embedded automatically when available via GSMTC. Use **Pick region** as a fallback to manually select a screen area containing album art.
 
 ### MP3 conversion
 
@@ -82,19 +89,26 @@ gravity/
 2. Choose a bitrate and quality preset.
 3. After each recording is saved as WAV it is converted to MP3, tagged, and the source WAV is removed.
 
-## Recommended Setup:
+### Manual recording
+
+1. Select an input device from the **Device** dropdown.
+2. Configure the sample rate, channels, and bit depth as needed.
+3. Set an output file path.
+4. Press **Record** to start and **Stop** to finish.
+
+## Recommended Setup
+
+For the cleanest, most reliable audio capture from other applications, use a virtual audio cable driver such as [VB-CABLE](https://vb-audio.com/Cable/). VB-CABLE lets you route audio output from any program directly into Autotape 3000 as an input device. This ensures:
  
- For the cleanest, most reliable audio capture from other applications, use a virtual audio cable driver such as [VB-CABLE](https://vb-audio.com/Cable/). VB-CABLE lets you route audio output from any program directly into Autotape 3000 as an input device. This ensures:
- 
- - No background noise or microphone interference
- - No system sounds or notifications in your recordings
- - Bit-perfect digital audio transfer between apps
- 
- **How to use:**
- 1. Download and install VB-CABLE from the [official site](https://vb-audio.com/Cable/).
- 2. Set your desired application's output to "CABLE Output" (the virtual cable).
- 3. In Autotape 3000, select "CABLE Output" as the input device.
- 4. Record as usual - only the routed application's audio will be captured.
+- No background noise or microphone interference
+- No system sounds or notifications in your recordings
+- Bit-perfect digital audio transfer between apps
+
+**How to use:**
+1. Download and install VB-CABLE from the [official site](https://vb-audio.com/Cable/).
+2. Set your desired application's output to "CABLE Output" (the virtual cable).
+3. In Autotape 3000, select "CABLE Output" as the input device.
+4. Record as usual - only the routed application's audio will be captured.
 
 ## Dependencies
 

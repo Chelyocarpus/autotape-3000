@@ -6,6 +6,11 @@ for track metadata (title, artist, album, playback state, and cover-art thumbnai
 as well as an event-driven watcher that calls a user-supplied callback whenever the
 playback state or track changes.
 
+Works with any GSMTC-capable media player (Spotify, YouTube Music, Apple Music,
+Tidal, VLC, Winamp, etc.).  The OS-designated current session is used as the
+primary source; if it is paused, all other sessions are searched for one that is
+actively playing.
+
 Requires the ``winrt-Windows.Media.Control`` and ``winrt-Windows.Storage.Streams``
 packages on Windows 10 or later.  If those packages are unavailable the module
 degrades gracefully: ``_GSMTC_AVAILABLE`` is set to ``False`` and the watcher falls
@@ -55,18 +60,22 @@ async def _gsmtc_get_media_info() -> dict | None:
         return None
     try:
         manager = await _MediaManager.request_async()
-        session = None
-        for s in manager.get_sessions():
-            if "spotify" in s.source_app_user_model_id.lower():
-                session = s
-                break
+        # Prefer the OS-designated current session; fall back to any playing session.
+        session = manager.get_current_session()
         if session is None:
             return None
+        playback_info = session.get_playback_info()
+        if playback_info.playback_status != _PlaybackStatus.PLAYING:
+            # Current session is paused — check other sessions for one that is playing.
+            for s in manager.get_sessions():
+                pi = s.get_playback_info()
+                if pi.playback_status == _PlaybackStatus.PLAYING:
+                    session = s
+                    break
         props = await session.try_get_media_properties_async()
         if props is None:
             return None
-        playback_info = session.get_playback_info()
-        is_playing = playback_info.playback_status == _PlaybackStatus.PLAYING
+        is_playing = session.get_playback_info().playback_status == _PlaybackStatus.PLAYING
         thumbnail_bytes: bytes | None = None
         if props.thumbnail:
             try:
@@ -156,10 +165,9 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
                 _MediaManager.request_async(), loop
             ).result(timeout=2)
             for s in manager_snapshot.get_sessions():
-                if "spotify" in s.source_app_user_model_id.lower():
-                    t1 = s.add_playback_info_changed(lambda *_: _fire())
-                    t2 = s.add_media_properties_changed(lambda *_: _fire())
-                    subscribed.append((s, t1, t2))
+                t1 = s.add_playback_info_changed(lambda *_: _fire())
+                t2 = s.add_media_properties_changed(lambda *_: _fire())
+                subscribed.append((s, t1, t2))
         except Exception:  # noqa: BLE001
             pass
 
@@ -171,12 +179,11 @@ async def _gsmtc_event_watcher(emit_fn: callable, stop_event: threading.Event) -
 
     mgr_token = manager.add_current_session_changed(_on_session_changed)
 
-    # Subscribe to initial sessions and trigger a first query.
+    # Subscribe to all current sessions and trigger a first query.
     for s in manager.get_sessions():
-        if "spotify" in s.source_app_user_model_id.lower():
-            t1 = s.add_playback_info_changed(lambda *_: _fire())
-            t2 = s.add_media_properties_changed(lambda *_: _fire())
-            subscribed.append((s, t1, t2))
+        t1 = s.add_playback_info_changed(lambda *_: _fire())
+        t2 = s.add_media_properties_changed(lambda *_: _fire())
+        subscribed.append((s, t1, t2))
     trigger.set()
 
     interval = POLL_INTERVAL_MS / 1000
