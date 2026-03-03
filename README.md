@@ -40,17 +40,16 @@ Playlist downloaders can't guarantee the track will be the exact version you wan
 
 1. Clone or download the repository.
 
-2. Install dependencies:
+2. Double-click **`run.bat`** — it installs all dependencies and launches the app automatically.
 
-```bash
-pip install -r requirements.txt
-```
+> **Manual alternative** — if you prefer the command line:
+> ```bash
+> pip install -r requirements.txt
+> python main.py
+> ```
 
-3. Run the application:
-
-```bash
-python main.py
-```
+> [!NOTE]
+> Python 3.11 or later must be installed and added to `PATH`. Download it from [python.org](https://www.python.org/downloads/) and check **"Add Python to PATH"** during setup.
 
 ## Project Structure
 

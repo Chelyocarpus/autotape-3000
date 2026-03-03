@@ -2,8 +2,10 @@
 
 import os as _os
 
-_ICON_DIR = _os.path.dirname(_os.path.abspath(__file__)).replace("\\", "/")
-_CHECK_SVG = f"{_ICON_DIR}/check.svg"
+_ICON_DIR     = _os.path.dirname(_os.path.abspath(__file__)).replace("\\", "/")
+_CHECK_SVG    = f"{_ICON_DIR}/check.svg"
+_ARROW_UP_SVG = f"{_ICON_DIR}/arrow_up.svg"
+_ARROW_DN_SVG = f"{_ICON_DIR}/arrow_down.svg"
 
 # Deep indigo-slate palette — all hues drawn from the blue-purple family (240–265°)
 # with rose as a designed complementary danger color.
@@ -16,8 +18,11 @@ COLOR_TEXT    = "#dde1f0"   # cool blue-white text — 12:1 on surface (WCAG AAA
 COLOR_SUBTEXT = "#8b90b0"   # muted blue-gray — 5.4:1 on surface (WCAG AA)
 COLOR_BORDER  = "#363660"   # dark indigo border — visible against all surfaces
 
+COLOR_WARNING = "#e8a838"   # amber — pending/waiting state
+
 # Derived interactive states (not exported, used only in stylesheet below)
 _ACCENT_HOVER   = "#6960e8"
+_WARNING_HOVER  = "#d4952a"
 _SURFACE_HOVER  = "#22223a"
 _DANGER_HOVER   = "#d94f65"
 
@@ -98,6 +103,19 @@ APP_STYLESHEET = f"""
     }}
     QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
         background-color: {_SURFACE_HOVER};
+    }}
+    QSpinBox::up-arrow {{
+        image: url("{_ARROW_UP_SVG}");
+        width: 7px;
+        height: 5px;
+    }}
+    QSpinBox::down-arrow {{
+        image: url("{_ARROW_DN_SVG}");
+        width: 7px;
+        height: 5px;
+    }}
+    QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled {{
+        opacity: 0.35;
     }}
     QCheckBox {{
         background-color: transparent;
@@ -215,5 +233,120 @@ APP_STYLESHEET = f"""
         font-weight: bold;
         font-family: 'Consolas', 'Courier New', monospace;
         letter-spacing: 2px;
+    }}
+    QTabWidget::pane {{
+        border: 1px solid {COLOR_BORDER};
+        border-radius: 6px;
+        background-color: {COLOR_BG};
+        padding: 4px;
+    }}
+    QTabBar::tab {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_SUBTEXT};
+        border: 1px solid {COLOR_BORDER};
+        border-bottom: none;
+        border-top-left-radius: 4px;
+        border-top-right-radius: 4px;
+        padding: 5px 16px;
+        font-size: 9pt;
+    }}
+    QTabBar::tab:selected {{
+        background-color: {COLOR_BG};
+        color: {COLOR_TEXT};
+        border-bottom: 1px solid {COLOR_BG};
+    }}
+    QTabBar::tab:hover:!selected {{
+        background-color: {_SURFACE_HOVER};
+        color: {COLOR_TEXT};
+    }}
+    QLabel#trackLabel {{
+        background-color: transparent;
+        color: {COLOR_ACCENT};
+        font-size: 10pt;
+        font-weight: bold;
+        padding: 0 4px 4px 4px;
+    }}
+    QTableWidget {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_TEXT};
+        gridline-color: {COLOR_BORDER};
+        border: 1px solid {COLOR_BORDER};
+        border-radius: 4px;
+        selection-background-color: {COLOR_ACCENT};
+        selection-color: #ffffff;
+    }}
+    QTableWidget::item {{
+        padding: 3px 6px;
+    }}
+    QTableWidget::item:hover {{
+        background-color: {_SURFACE_HOVER};
+    }}
+    QTableWidget::item:selected {{
+        background-color: {COLOR_ACCENT};
+        color: #ffffff;
+    }}
+    QTableWidget::item:alternate {{
+        background-color: {COLOR_BG};
+    }}
+    QTableWidget::item:alternate:hover {{
+        background-color: {_SURFACE_HOVER};
+    }}
+    QTableWidget::item:alternate:selected {{
+        background-color: {COLOR_ACCENT};
+        color: #ffffff;
+    }}
+    QHeaderView::section {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_SUBTEXT};
+        border: none;
+        border-bottom: 1px solid {COLOR_BORDER};
+        padding: 4px 6px;
+        font-size: 8pt;
+    }}
+    QScrollBar:vertical {{
+        background-color: {COLOR_BG};
+        width: 8px;
+        border: none;
+        border-radius: 4px;
+    }}
+    QScrollBar::handle:vertical {{
+        background-color: {COLOR_BORDER};
+        min-height: 24px;
+        border-radius: 4px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background-color: {COLOR_SUBTEXT};
+    }}
+    QScrollBar::add-line:vertical,
+    QScrollBar::sub-line:vertical {{
+        height: 0;
+        background: none;
+    }}
+    QScrollBar::add-page:vertical,
+    QScrollBar::sub-page:vertical {{
+        background: none;
+    }}
+    QScrollBar:horizontal {{
+        background-color: {COLOR_BG};
+        height: 8px;
+        border: none;
+        border-radius: 4px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background-color: {COLOR_BORDER};
+        min-width: 24px;
+        border-radius: 4px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background-color: {COLOR_SUBTEXT};
+    }}
+    QScrollBar::add-line:horizontal,
+    QScrollBar::sub-line:horizontal {{
+        width: 0;
+        background: none;
+    }}
+    QScrollBar::add-page:horizontal,
+    QScrollBar::sub-page:horizontal {{
+        background: none;
     }}
 """
