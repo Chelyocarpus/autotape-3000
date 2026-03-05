@@ -52,6 +52,7 @@ from core.recorder import (
     Recorder,
     get_all_devices,
 )
+from gui.icons import make as _icon
 from gui.region_selector import RegionSelector
 from gui.titlebar import TitleBar
 from gui.waveform import WaveformWidget
@@ -201,10 +202,11 @@ class RecorderApp(QMainWindow):
         layout.setSpacing(10)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_log_tab(), "Log")
-        tabs.addTab(self._build_record_tab(), "Record")
-        tabs.addTab(self._build_export_tab(), "Export")
-        tabs.addTab(self._build_automation_tab(), "Automation")
+        tabs.setIconSize(QSize(14, 14))
+        tabs.addTab(self._build_log_tab(), _icon("tab_log.svg"), "Log")
+        tabs.addTab(self._build_record_tab(), _icon("tab_record.svg"), "Record")
+        tabs.addTab(self._build_export_tab(), _icon("tab_export.svg"), "Export")
+        tabs.addTab(self._build_automation_tab(), _icon("tab_automation.svg"), "Automation")
         layout.addWidget(tabs, 1)
 
         layout.addWidget(self._track_label)
@@ -311,6 +313,7 @@ class RecorderApp(QMainWindow):
         row.addWidget(self._device_combo, 1)
 
         refresh_btn = QPushButton("Refresh")
+        refresh_btn.setIcon(_icon("btn_refresh.svg"))
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.clicked.connect(self._populate_devices)
         row.addWidget(refresh_btn)
@@ -396,17 +399,20 @@ class RecorderApp(QMainWindow):
         row.addSpacing(8)
 
         self._song_cover_btn = QPushButton("Song cover")
+        self._song_cover_btn.setIcon(_icon("btn_song_cover.svg"))
         self._song_cover_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._song_cover_btn.setCheckable(True)
         self._song_cover_btn.clicked.connect(self._on_song_cover_clicked)
         row.addWidget(self._song_cover_btn)
 
         pick_btn = QPushButton("Pick region")
+        pick_btn.setIcon(_icon("btn_pick_region.svg"))
         pick_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         pick_btn.clicked.connect(self._launch_cover_picker)
         row.addWidget(pick_btn)
 
         self._clear_cover_btn = QPushButton("Clear")
+        self._clear_cover_btn.setIcon(_icon("btn_clear.svg"))
         self._clear_cover_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_cover_btn.clicked.connect(self._clear_cover_art)
         self._clear_cover_btn.setEnabled(False)
@@ -424,6 +430,7 @@ class RecorderApp(QMainWindow):
         row.addWidget(self._output_edit, 1)
 
         browse_btn = QPushButton("Browse")
+        browse_btn.setIcon(_icon("btn_browse.svg"))
         browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_btn.clicked.connect(self._browse_output)
         row.addWidget(browse_btn)
@@ -483,6 +490,7 @@ class RecorderApp(QMainWindow):
         self._record_btn.setObjectName("recordBtn")
         self._record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._record_btn.setMinimumWidth(180)
+        self._record_btn.setIconSize(QSize(16, 16))
         self._record_btn.clicked.connect(self._toggle_recording)
         self._set_record_btn_idle()
         col.addWidget(self._record_btn)
@@ -499,18 +507,21 @@ class RecorderApp(QMainWindow):
         return lbl
 
     def _set_record_btn_idle(self) -> None:
+        self._record_btn.setIcon(_icon("btn_record_start.svg"))
         self._record_btn.setStyleSheet(
             f"QPushButton#recordBtn {{ background-color: {COLOR_ACCENT}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
             f"QPushButton#recordBtn:hover {{ background-color: {_ACCENT_HOVER}; }}"
         )
 
     def _set_record_btn_recording(self) -> None:
+        self._record_btn.setIcon(_icon("btn_record_stop.svg"))
         self._record_btn.setStyleSheet(
             f"QPushButton#recordBtn {{ background-color: {COLOR_DANGER}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
             f"QPushButton#recordBtn:hover {{ background-color: {_DANGER_HOVER}; }}"
         )
 
     def _set_record_btn_pending(self) -> None:
+        self._record_btn.setIcon(_icon("btn_record_stop.svg"))
         self._record_btn.setStyleSheet(
             f"QPushButton#recordBtn {{ background-color: {COLOR_WARNING}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
             f"QPushButton#recordBtn:hover {{ background-color: {_WARNING_HOVER}; }}"

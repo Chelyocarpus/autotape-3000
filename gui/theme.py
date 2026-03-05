@@ -2,7 +2,7 @@
 
 import os as _os
 
-_ICON_DIR     = _os.path.dirname(_os.path.abspath(__file__)).replace("\\", "/")
+_ICON_DIR     = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "icons").replace("\\", "/")
 _CHECK_SVG    = f"{_ICON_DIR}/check.svg"
 _ARROW_UP_SVG = f"{_ICON_DIR}/arrow_up.svg"
 _ARROW_DN_SVG = f"{_ICON_DIR}/arrow_down.svg"
