@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-05
+
+### Added
+- SVG icons on all four tab labels (Log, Record, Export, Automation) and all action buttons (Refresh, Browse, Song cover, Pick region, Clear, Start/Stop Recording). A new `gui/icons.py` helper module provides the `make()` factory used throughout the UI.
+
 ## [1.0.9] - 2026-03-03
 
 ### Fixed

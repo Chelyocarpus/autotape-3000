@@ -1,8 +1,8 @@
 """Shared dark theme constants and Qt stylesheet for all Autotape 3000 windows."""
 
-import os as _os
+from gui.icons import ICONS_DIR as _ICONS_DIR
 
-_ICON_DIR     = _os.path.dirname(_os.path.abspath(__file__)).replace("\\", "/")
+_ICON_DIR     = _ICONS_DIR.as_posix()
 _CHECK_SVG    = f"{_ICON_DIR}/check.svg"
 _ARROW_UP_SVG = f"{_ICON_DIR}/arrow_up.svg"
 _ARROW_DN_SVG = f"{_ICON_DIR}/arrow_down.svg"
