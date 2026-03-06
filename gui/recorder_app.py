@@ -111,6 +111,34 @@ def _format_source_app(source_app: str) -> str:
     return name if name else source_app
 
 
+def _pct_deviation(actual: float, reported: float) -> float:
+    """Return the percentage deviation between *actual* and *reported* duration."""
+    return abs(actual - reported) / max(reported, 0.001) * 100
+
+
+def _abs_deviation(actual: float, reported: float) -> float:
+    """Return the absolute deviation in seconds between *actual* and *reported* duration."""
+    return abs(actual - reported)
+
+
+def _dur_skip_pct_reason(actual: float, reported: float, threshold_pct: int) -> str:
+    """Return a human-readable skip reason for a percentage duration mismatch."""
+    deviation = _pct_deviation(actual, reported)
+    return (
+        f"Duration {actual:.1f}s deviates {deviation:.0f}% "
+        f"from reported {reported:.1f}s (limit: {threshold_pct}%)"
+    )
+
+
+def _dur_skip_abs_reason(actual: float, reported: float, threshold_abs_s: int) -> str:
+    """Return a human-readable skip reason for an absolute duration mismatch."""
+    deviation = _abs_deviation(actual, reported)
+    return (
+        f"Duration {actual:.1f}s deviates {deviation:.1f}s "
+        f"from reported {reported:.1f}s (limit: {threshold_abs_s}s)"
+    )
+
+
 class RecorderApp(QMainWindow):
     """PyQt6 main window for audio recording."""
 
@@ -776,14 +804,13 @@ class RecorderApp(QMainWindow):
                     return
                 if reported_duration is not None:
                     if dur_match_pct_enabled:
-                        deviation_pct = abs(duration - reported_duration) / max(reported_duration, 0.001)
-                        if deviation_pct > dur_match_pct / 100:
+                        if _pct_deviation(duration, reported_duration) > dur_match_pct:
                             self._sig_save_skipped_dur_pct.emit(
                                 duration, reported_duration, dur_match_pct, track_display or ""
                             )
                             return
                     if dur_match_abs_enabled:
-                        if abs(duration - reported_duration) > dur_match_abs_s:
+                        if _abs_deviation(duration, reported_duration) > dur_match_abs_s:
                             self._sig_save_skipped_dur_abs.emit(
                                 duration, reported_duration, dur_match_abs_s, track_display or ""
                             )
@@ -886,11 +913,7 @@ class RecorderApp(QMainWindow):
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        deviation = abs(actual - reported) / max(reported, 0.001) * 100
-        reason = (
-            f"Duration {actual:.1f}s deviates {deviation:.0f}% "
-            f"from reported {reported:.1f}s (limit: {threshold_pct}%)"
-        )
+        reason = _dur_skip_pct_reason(actual, reported, threshold_pct)
         self._log_entry("Skipped", track or "", actual, tooltip=reason)
         self._status(f"Skipped \u2014 {reason}")
 
@@ -901,11 +924,7 @@ class RecorderApp(QMainWindow):
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        deviation = abs(actual - reported)
-        reason = (
-            f"Duration {actual:.1f}s deviates {deviation:.1f}s "
-            f"from reported {reported:.1f}s (limit: {threshold_abs_s}s)"
-        )
+        reason = _dur_skip_abs_reason(actual, reported, threshold_abs_s)
         self._log_entry("Skipped", track or "", actual, tooltip=reason)
         self._status(f"Skipped \u2014 {reason}")
 
@@ -914,7 +933,11 @@ class RecorderApp(QMainWindow):
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        self._log_entry("Skipped", track or stem, 0.0, tooltip=f"Duplicate: {stem} already exists")
+        self._log_skip_duplicate(stem, track or stem)
+
+    def _log_skip_duplicate(self, stem: str, display: str) -> None:
+        """Log a duplicate-skip entry and update the status bar."""
+        self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {stem} already exists")
         self._status(f"Skipped duplicate \u2014 {stem} already exists")
 
     def _on_save_error(self, error: str, track: str | None = None) -> None:
@@ -1117,8 +1140,7 @@ class RecorderApp(QMainWindow):
         resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
         if resolved is None:
             self._stop_recording(discard=True)
-            self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {safe_name} already exists")
-            self._status(f"Skipped duplicate: {display}")
+            self._log_skip_duplicate(safe_name, display)
             return False
         if convert_mp3:
             self._output_filename = f"{safe_name}.wav"
@@ -1239,8 +1261,7 @@ class RecorderApp(QMainWindow):
         resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
         if resolved is None:
             self._track_label.setText(display)
-            self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {safe_name} already exists")
-            self._status(f"Skipped duplicate: {display}")
+            self._log_skip_duplicate(safe_name, display)
             return
         if convert_mp3:
             # Always record as WAV first; the .mp3 path was validated above.
