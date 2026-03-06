@@ -93,9 +93,22 @@ _LOG_STATUS_COLORS: dict[str, str] = {
 
 WINDOW_TITLE = "Autotape 3000"
 WINDOW_WIDTH = 520
-WINDOW_HEIGHT = 630
+WINDOW_HEIGHT = 720
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "settings.json")
+
+
+def _format_source_app(source_app: str) -> str:
+    """Return a short, human-readable label from a GSMTC source AUMID.
+
+    Strips path components and extensions so that e.g.
+    ``"{GUID}\\\\Spotify.exe"`` becomes ``"Spotify"``.
+    """
+    if not source_app:
+        return ""
+    name = source_app.replace("/", "\\").split("\\")[-1]
+    name = name.split(".")[0]
+    return name if name else source_app
 
 
 class RecorderApp(QMainWindow):
@@ -112,6 +125,8 @@ class RecorderApp(QMainWindow):
     _sig_save_complete = pyqtSignal(str, float, str)           # path, duration, track
     _sig_save_skipped = pyqtSignal(float, int, str)            # duration, min_s, track
     _sig_save_skipped_duplicate = pyqtSignal(str, str)         # stem, track
+    _sig_save_skipped_dur_pct = pyqtSignal(float, float, int, str)   # actual_s, reported_s, pct, track
+    _sig_save_skipped_dur_abs = pyqtSignal(float, float, int, str)   # actual_s, reported_s, abs_s, track
     _sig_save_error = pyqtSignal(str, str)                     # error, track
     _sig_ensure_btn_ready = pyqtSignal()
 
@@ -133,6 +148,8 @@ class RecorderApp(QMainWindow):
         self._output_filename: str = "recording.wav"
         self._duplicate_mode: str = DEFAULT_DUPLICATE_MODE
         self._stop_requested: bool = False
+        self._current_reported_duration: float | None = None
+        self._priority_sources: list[str] = ["Spotify", "Firefox"]
 
         self._media_last_title: str | None = None
         self._media_watcher_stop = threading.Event()
@@ -155,16 +172,17 @@ class RecorderApp(QMainWindow):
         self._sig_save_complete.connect(self._on_save_complete)
         self._sig_save_skipped.connect(self._on_save_skipped)
         self._sig_save_skipped_duplicate.connect(self._on_save_skipped_duplicate)
+        self._sig_save_skipped_dur_pct.connect(self._on_save_skipped_dur_pct)
+        self._sig_save_skipped_dur_abs.connect(self._on_save_skipped_dur_abs)
         self._sig_save_error.connect(self._on_save_error)
         self._sig_ensure_btn_ready.connect(self._ensure_btn_ready)
 
         self._waveform = WaveformWidget()
         self._waveform_level.connect(self._waveform.push_level)
 
-        self._track_label = QLabel("")
+        self._track_label = QLabel("\u2014")
         self._track_label.setObjectName("trackLabel")
         self._track_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._track_label.setVisible(False)
 
         self._setup_window()
         self._build_ui()
@@ -270,10 +288,47 @@ class RecorderApp(QMainWindow):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self._build_auto_record_section())
+        layout.addWidget(self._build_source_priority_section())
         layout.addWidget(self._build_duplicate_section())
         layout.addWidget(self._build_min_duration_section())
+        layout.addWidget(self._build_duration_match_section())
         layout.addStretch()
         return tab
+
+    def _build_source_priority_section(self) -> QGroupBox:
+        box = QGroupBox("Source Priority")
+        col = QVBoxLayout(box)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(4)
+
+        row = QHBoxLayout()
+        row.addWidget(self._subtext_label("Priority (highest first):"))
+        self._priority_sources_edit = QLineEdit()
+        self._priority_sources_edit.setPlaceholderText("e.g. Spotify, Firefox")
+        self._priority_sources_edit.setToolTip(
+            "When multiple audio sources are playing simultaneously, the one "
+            "whose player name matches the first entry in this comma-separated "
+            "list is recorded.\n"
+            "Matching is case-insensitive and partial "
+            "(e.g. \"Spotify\" matches \"Spotify.exe\")."
+        )
+        self._priority_sources_edit.setText(", ".join(self._priority_sources))
+        self._priority_sources_edit.textChanged.connect(self._on_priority_sources_changed)
+        row.addWidget(self._priority_sources_edit, 1)
+        col.addLayout(row)
+
+        if not _GSMTC_AVAILABLE:
+            unavail = QLabel("Requires winsdk (GSMTC unavailable)")
+            unavail.setObjectName("hint")
+            col.addWidget(unavail)
+
+        return box
+
+    def _on_priority_sources_changed(self) -> None:
+        text = self._priority_sources_edit.text()
+        self._priority_sources = [
+            part.strip() for part in text.split(",") if part.strip()
+        ]
 
     def _build_min_duration_section(self) -> QGroupBox:
         box = QGroupBox("Minimum Duration")
@@ -302,6 +357,49 @@ class RecorderApp(QMainWindow):
         hint.setObjectName("hint")
         row.addWidget(hint)
         row.addStretch()
+        return box
+
+    def _build_duration_match_section(self) -> QGroupBox:
+        box = QGroupBox("Duration Match")
+        col = QVBoxLayout(box)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(6)
+
+        row1 = QHBoxLayout()
+        self._dur_match_pct_chk = QCheckBox("Skip if duration deviates by more than")
+        self._dur_match_pct_chk.setEnabled(_GSMTC_AVAILABLE)
+        self._dur_match_pct_chk.stateChanged.connect(self._on_dur_match_pct_toggle)
+        row1.addWidget(self._dur_match_pct_chk)
+        self._dur_match_pct_spin = QSpinBox()
+        self._dur_match_pct_spin.setRange(1, 50)
+        self._dur_match_pct_spin.setValue(10)
+        self._dur_match_pct_spin.setFixedWidth(55)
+        self._dur_match_pct_spin.setEnabled(False)
+        row1.addWidget(self._dur_match_pct_spin)
+        row1.addWidget(self._subtext_label("%"))
+        row1.addStretch()
+        col.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        self._dur_match_abs_chk = QCheckBox("Skip if duration deviates by more than")
+        self._dur_match_abs_chk.setEnabled(_GSMTC_AVAILABLE)
+        self._dur_match_abs_chk.stateChanged.connect(self._on_dur_match_abs_toggle)
+        row2.addWidget(self._dur_match_abs_chk)
+        self._dur_match_abs_spin = QSpinBox()
+        self._dur_match_abs_spin.setRange(1, 3600)
+        self._dur_match_abs_spin.setValue(30)
+        self._dur_match_abs_spin.setFixedWidth(65)
+        self._dur_match_abs_spin.setEnabled(False)
+        row2.addWidget(self._dur_match_abs_spin)
+        row2.addWidget(self._subtext_label("s"))
+        row2.addStretch()
+        col.addLayout(row2)
+
+        if not _GSMTC_AVAILABLE:
+            unavail = QLabel("Requires winsdk (GSMTC unavailable)")
+            unavail.setObjectName("hint")
+            col.addWidget(unavail)
+
         return box
 
     def _build_device_section(self) -> QGroupBox:
@@ -528,7 +626,7 @@ class RecorderApp(QMainWindow):
         )
 
     def _log_entry(
-        self, status: str, track: str, duration: float, path: str = ""
+        self, status: str, track: str, duration: float, path: str = "", tooltip: str = ""
     ) -> None:
         """Append one row to the recording log table."""
         row = self._log_table.rowCount()
@@ -546,6 +644,8 @@ class RecorderApp(QMainWindow):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if col == 1:
                 item.setForeground(QColor(color_hex))
+            if tooltip:
+                item.setToolTip(tooltip)
             self._log_table.setItem(row, col, item)
         self._log_table.scrollToBottom()
 
@@ -634,12 +734,7 @@ class RecorderApp(QMainWindow):
         self._timer_label.setText("00:00:00")
         self._timer_label.setVisible(True)
         self._elapsed_timer.start()
-        track = self._current_track_display
-        if track:
-            self._track_label.setText(track)
-            self._track_label.setVisible(True)
-        else:
-            self._track_label.setVisible(False)
+        self._track_label.setText(self._current_track_display or "\u2014")
         self._status(f"Recording from: {device.name}")
 
     def _stop_recording(self, *, discard: bool = False) -> None:
@@ -648,11 +743,16 @@ class RecorderApp(QMainWindow):
 
         self._stop_requested = False
         self._early_started_recording = False
-        self._track_label.setVisible(False)
+        self._track_label.setText("\u2014")
 
         output_folder = self._output_edit.text().strip()
         output_path = os.path.join(output_folder, self._output_filename)
         min_duration_s = self._min_dur_min.value() * 60 + self._min_dur_sec.value()
+        reported_duration = self._current_reported_duration
+        dur_match_pct_enabled = self._dur_match_pct_chk.isChecked()
+        dur_match_pct = self._dur_match_pct_spin.value()
+        dur_match_abs_enabled = self._dur_match_abs_chk.isChecked()
+        dur_match_abs_s = self._dur_match_abs_spin.value()
         samplerate = self._recorder.samplerate
         convert_mp3 = self._convert_mp3_chk.isChecked()
         mp3_bitrate = int(self._mp3_bitrate_combo.currentText())
@@ -674,6 +774,20 @@ class RecorderApp(QMainWindow):
                 if min_duration_s > 0 and duration < min_duration_s:
                     self._sig_save_skipped.emit(duration, min_duration_s, track_display or "")
                     return
+                if reported_duration is not None:
+                    if dur_match_pct_enabled:
+                        deviation_pct = abs(duration - reported_duration) / max(reported_duration, 0.001)
+                        if deviation_pct > dur_match_pct / 100:
+                            self._sig_save_skipped_dur_pct.emit(
+                                duration, reported_duration, dur_match_pct, track_display or ""
+                            )
+                            return
+                    if dur_match_abs_enabled:
+                        if abs(duration - reported_duration) > dur_match_abs_s:
+                            self._sig_save_skipped_dur_abs.emit(
+                                duration, reported_duration, dur_match_abs_s, track_display or ""
+                            )
+                            return
                 if convert_mp3:
                     final_ext = ".mp3"
                     resolved_mp3 = resolve_output_path(output_folder, output_stem, final_ext, duplicate_mode)
@@ -761,15 +875,46 @@ class RecorderApp(QMainWindow):
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
         mins, secs = divmod(min_duration_s, 60)
-        self._log_entry("Skipped", track or "", duration)
-        self._status(f"Skipped \u2014 {duration:.1f}s is shorter than minimum {mins:02d}:{secs:02d}")
+        reason = f"Duration {duration:.1f}s is shorter than minimum {mins:02d}:{secs:02d}"
+        self._log_entry("Skipped", track or "", duration, tooltip=reason)
+        self._status(f"Skipped \u2014 {reason}")
+
+    def _on_save_skipped_dur_pct(
+        self, actual: float, reported: float, threshold_pct: int, track: str | None = None
+    ) -> None:
+        if not self._recording and not self._media_pending_start:
+            self._record_btn.setText("Start Recording")
+            self._set_record_btn_idle()
+            self._record_btn.setEnabled(True)
+        deviation = abs(actual - reported) / max(reported, 0.001) * 100
+        reason = (
+            f"Duration {actual:.1f}s deviates {deviation:.0f}% "
+            f"from reported {reported:.1f}s (limit: {threshold_pct}%)"
+        )
+        self._log_entry("Skipped", track or "", actual, tooltip=reason)
+        self._status(f"Skipped \u2014 {reason}")
+
+    def _on_save_skipped_dur_abs(
+        self, actual: float, reported: float, threshold_abs_s: int, track: str | None = None
+    ) -> None:
+        if not self._recording and not self._media_pending_start:
+            self._record_btn.setText("Start Recording")
+            self._set_record_btn_idle()
+            self._record_btn.setEnabled(True)
+        deviation = abs(actual - reported)
+        reason = (
+            f"Duration {actual:.1f}s deviates {deviation:.1f}s "
+            f"from reported {reported:.1f}s (limit: {threshold_abs_s}s)"
+        )
+        self._log_entry("Skipped", track or "", actual, tooltip=reason)
+        self._status(f"Skipped \u2014 {reason}")
 
     def _on_save_skipped_duplicate(self, stem: str, track: str | None = None) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        self._log_entry("Skipped", track or stem, 0.0)
+        self._log_entry("Skipped", track or stem, 0.0, tooltip=f"Duplicate: {stem} already exists")
         self._status(f"Skipped duplicate \u2014 {stem} already exists")
 
     def _on_save_error(self, error: str, track: str | None = None) -> None:
@@ -779,6 +924,12 @@ class RecorderApp(QMainWindow):
         self._log_entry("Error", track or "", 0.0)
         self._status(f"Error: {error}")
         QMessageBox.critical(self, "Save Error", error)
+
+    def _on_dur_match_pct_toggle(self) -> None:
+        self._dur_match_pct_spin.setEnabled(self._dur_match_pct_chk.isChecked())
+
+    def _on_dur_match_abs_toggle(self) -> None:
+        self._dur_match_abs_spin.setEnabled(self._dur_match_abs_chk.isChecked())
 
     def _on_convert_mp3_toggle(self) -> None:
         enabled = self._convert_mp3_chk.isChecked()
@@ -915,6 +1066,7 @@ class RecorderApp(QMainWindow):
             emit_fn=self._media_info_ready.emit,
             stop_event=self._media_watcher_stop,
             on_track_change_fn=self._sig_track_changing.emit,
+            get_priority_fn=lambda: self._priority_sources,
         )
 
     def _on_track_changing(self) -> None:
@@ -945,6 +1097,7 @@ class RecorderApp(QMainWindow):
         # filled in by _media_poll once the GSMTC query returns.
         self._current_track_display = None
         self._current_album = ""
+        self._current_reported_duration = None
         self._output_filename = "_pending.wav"
         self._start_recording()
         if self._recording:
@@ -964,7 +1117,7 @@ class RecorderApp(QMainWindow):
         resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
         if resolved is None:
             self._stop_recording(discard=True)
-            self._log_entry("Skipped", display, 0.0)
+            self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {safe_name} already exists")
             self._status(f"Skipped duplicate: {display}")
             return False
         if convert_mp3:
@@ -973,12 +1126,12 @@ class RecorderApp(QMainWindow):
             self._output_filename = os.path.basename(resolved)
         self._current_track_display = display
         self._current_album = info.get("album_title", "")
+        self._current_reported_duration = info.get("duration_seconds")
         if info.get("thumbnail_bytes"):
             self._apply_gsmtc_cover(info["thumbnail_bytes"])
         elif self._cover_region_bbox is not None and not self._use_song_cover:
             QTimer.singleShot(800, self._recapture_cover_art)
         self._track_label.setText(display)
-        self._track_label.setVisible(True)
         self._status(f"Recording: {display}")
         return True
 
@@ -1018,6 +1171,7 @@ class RecorderApp(QMainWindow):
             if self._recording:
                 self._stop_recording()
             self._media_last_title = None
+            self._track_label.setText("\u2014")
             return
 
         is_idle = not info["is_playing"]
@@ -1033,7 +1187,10 @@ class RecorderApp(QMainWindow):
             display = f"{artist} - {title}" if artist else title
             track_key = f"{title}|{artist}"
 
-        self._media_status_lbl.setText(f"Playing: {display}")
+        source_app = info.get("source_app", "")
+        source_label = _format_source_app(source_app)
+        status_suffix = f" [{source_label}]" if source_label else ""
+        self._media_status_lbl.setText(f"Playing: {display}{status_suffix}")
 
         if track_key == self._media_last_title:
             if self._early_started_recording and not is_idle and self._recording:
@@ -1051,6 +1208,7 @@ class RecorderApp(QMainWindow):
             # pause has persisted for _PAUSE_DEBOUNCE_MS.
             if self._recording:
                 self._schedule_pause_stop()
+            self._track_label.setText("\u2014")
             return
 
         # New track is playing — cancel any pending pause-stop and switch.
@@ -1080,7 +1238,8 @@ class RecorderApp(QMainWindow):
         final_ext = ".mp3" if convert_mp3 else ".wav"
         resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
         if resolved is None:
-            self._log_entry("Skipped", display, 0.0)
+            self._track_label.setText(display)
+            self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {safe_name} already exists")
             self._status(f"Skipped duplicate: {display}")
             return
         if convert_mp3:
@@ -1091,6 +1250,7 @@ class RecorderApp(QMainWindow):
             self._output_filename = os.path.basename(resolved)
         self._current_track_display = display
         self._current_album = info.get("album_title", "")
+        self._current_reported_duration = info.get("duration_seconds")
         if info.get("thumbnail_bytes"):
             self._apply_gsmtc_cover(info["thumbnail_bytes"])
         elif self._use_song_cover:
@@ -1156,6 +1316,11 @@ class RecorderApp(QMainWindow):
             "duplicate_mode": self._duplicate_mode,
             "cover_region_bbox": list(self._cover_region_bbox) if self._cover_region_bbox else None,
             "use_song_cover": self._use_song_cover,
+            "dur_match_pct_enabled": self._dur_match_pct_chk.isChecked(),
+            "dur_match_pct": self._dur_match_pct_spin.value(),
+            "dur_match_abs_enabled": self._dur_match_abs_chk.isChecked(),
+            "dur_match_abs_s": self._dur_match_abs_spin.value(),
+            "priority_sources": self._priority_sources,
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
@@ -1219,3 +1384,16 @@ class RecorderApp(QMainWindow):
         if _get("use_song_cover"):
             self._use_song_cover = True
             self._song_cover_btn.setChecked(True)
+        if (v := _get("dur_match_pct_enabled")) is not None:
+            self._dur_match_pct_chk.setChecked(bool(v))
+            self._on_dur_match_pct_toggle()
+        if (v := _get("dur_match_pct")) is not None:
+            self._dur_match_pct_spin.setValue(int(v))
+        if (v := _get("dur_match_abs_enabled")) is not None:
+            self._dur_match_abs_chk.setChecked(bool(v))
+            self._on_dur_match_abs_toggle()
+        if (v := _get("dur_match_abs_s")) is not None:
+            self._dur_match_abs_spin.setValue(int(v))
+        if (v := _get("priority_sources")) is not None and isinstance(v, list):
+            self._priority_sources = [str(s) for s in v if str(s).strip()]
+            self._priority_sources_edit.setText(", ".join(self._priority_sources))
