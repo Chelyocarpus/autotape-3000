@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-06
+
+### Added
+- **Source Priority** (Automation tab): a new "Source Priority" group box lets users specify a comma-separated, ordered list of player names (e.g. `Spotify, Firefox`). When two or more audio sources are playing simultaneously, the session whose AUMID contains the first matching entry is chosen for recording, resolving UI confusion and incorrect track titles caused by player-agnostic session selection. The priority list is persisted in `settings.json` under `priority_sources`.
+- `_pick_by_priority` helper in `services/media_session.py` selects the highest-priority playing GSMTC session using case-insensitive AUMID substring matching.
+- `source_app` field added to the media-session info dictionary returned by `_gsmtc_get_media_info`; the value is the raw `source_app_user_model_id` of the selected session. The Automation-tab status label now shows the active player name alongside the current track (e.g. `Playing: Artist - Title [Spotify]`).
+- `get_priority_fn` parameter added to `run_gsmtc_watcher` and `_gsmtc_event_watcher`; the callable is invoked on every poll/event so priority changes take effect immediately without restarting the watcher.
+
+## [1.2.0] - 2026-03-06
+
+### Added
+- **Duration Match – percentage filter** (Automation tab): a new "Duration Match" group box lets users enable a filter that skips recordings whose length deviates from the GSMTC-reported song duration by more than a configurable percentage (1–50%, default 10%). The filter is automatically disabled when GSMTC is unavailable (winsdk missing).
+- **Duration Match – absolute seconds filter** (Automation tab): a second independent filter skips recordings that differ from the reported duration by more than a configurable number of seconds (1–3600, default 30). Both filters can be toggled on/off independently and their spin-box values are persisted in `settings.json`.
+- `duration_seconds` field added to the media-session info dictionary returned by `_gsmtc_get_media_info`; the value is derived from `GlobalSystemMediaTransportControlsSessionTimelineProperties.end_time − start_time` and is `None` when the session does not expose timeline data.
+- Two new cross-thread signals (`_sig_save_skipped_dur_pct`, `_sig_save_skipped_dur_abs`) marshal duration-mismatch skip events from the save thread to the main thread, producing Log-tab entries with status "Skipped" and descriptive status-bar messages that show actual vs. reported duration and the active threshold.
+
 ## [1.1.0] - 2026-03-05
 
 ### Added

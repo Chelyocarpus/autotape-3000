@@ -7,9 +7,9 @@ as well as an event-driven watcher that calls a user-supplied callback whenever 
 playback state or track changes.
 
 Works with any GSMTC-capable media player (Spotify, YouTube Music, Apple Music,
-Tidal, VLC, Winamp, etc.).  The OS-designated current session is used as the
-primary source; if it is paused, all other sessions are searched for one that is
-actively playing.
+Tidal, VLC, Winamp, etc.).  When multiple sessions are playing simultaneously a
+configurable priority list is used to pick the primary source; if it is paused,
+all other sessions are searched for one that is actively playing.
 
 Requires the ``winrt-Windows.Media.Control`` and ``winrt-Windows.Storage.Streams``
 packages on Windows 10 or later.  If those packages are unavailable the module
@@ -35,13 +35,46 @@ except ImportError:
     _GSMTC_AVAILABLE = False
 
 
-async def _gsmtc_get_media_info() -> dict | None:
+def _pick_by_priority(
+    sessions: list,
+    priority_sources: list[str] | None,
+) -> object:
+    """Return the highest-priority session from ``sessions``.
+
+    Iterates through ``priority_sources`` (case-insensitive substrings matched
+    against each session's ``source_app_user_model_id``) and returns the first
+    session whose AUMID contains the substring.  Falls back to the first entry
+    in the list when no priority entry matches or ``priority_sources`` is
+    empty/``None``.
+    """
+    if not priority_sources or len(sessions) == 1:
+        return sessions[0]
+    for source_name in priority_sources:
+        source_lower = source_name.strip().lower()
+        if not source_lower:
+            continue
+        for session in sessions:
+            try:
+                aumid = (session.source_app_user_model_id or "").lower()
+                if source_lower in aumid:
+                    return session
+            except Exception:  # noqa: BLE001
+                pass
+    return sessions[0]
+
+
+async def _gsmtc_get_media_info(
+    priority_sources: list[str] | None = None,
+) -> dict | None:
     """
     Query the active GSMTC session and return structured track metadata.
 
-    Iterates over all registered GSMTC sessions to find an active one, then
-    reads its media properties and playback state.  If a thumbnail stream is
-    attached it is downloaded into a ``bytes`` object.
+    When multiple sessions are playing simultaneously, ``priority_sources`` is
+    used to pick the one to query: the first entry (case-insensitive substring
+    of the session's ``source_app_user_model_id``) that matches a playing
+    session wins.  If no priority entry matches, the first playing session is
+    used.  When nothing is playing, the OS-designated current session is used
+    to report the paused/idle state.
 
     Returns
     -------
@@ -50,36 +83,34 @@ async def _gsmtc_get_media_info() -> dict | None:
         unavailable, no active session is found, or any error occurs::
 
             {
-                "title":          str,         # Track title, empty string if unknown.
-                "artist":         str,         # Primary artist, empty string if unknown.
-                "album_title":    str,         # Album name, empty string if unknown.
-                "is_playing":     bool,        # True when playback status is PLAYING.
-                "thumbnail_bytes": bytes | None # Raw cover-art image bytes, or None.
+                "title":           str,          # Track title, empty string if unknown.
+                "artist":          str,          # Primary artist, empty string if unknown.
+                "album_title":     str,          # Album name, empty string if unknown.
+                "is_playing":      bool,         # True when playback status is PLAYING.
+                "thumbnail_bytes": bytes | None, # Raw cover-art image bytes, or None.
+                "source_app":      str,          # Source app AUMID of the chosen session.
             }
     """
     if not _GSMTC_AVAILABLE:
         return None
     try:
         manager = await _MediaManager.request_async()
-        # Prefer the OS-designated current session; fall back to any playing session.
-        session = manager.get_current_session()
-        if session is None:
-            # No OS-designated current session — scan all sessions for one that is playing.
-            for s in manager.get_sessions():
-                pi = s.get_playback_info()
-                if pi.playback_status == _PlaybackStatus.PLAYING:
-                    session = s
-                    break
+        sessions = list(manager.get_sessions())
+        if not sessions:
+            return None
+        # Collect all actively playing sessions and pick by priority.
+        playing_sessions = [
+            s for s in sessions
+            if s.get_playback_info().playback_status == _PlaybackStatus.PLAYING
+        ]
+        if playing_sessions:
+            session = _pick_by_priority(playing_sessions, priority_sources)
+        else:
+            # Nothing is playing — use the OS-designated current session to
+            # report the paused/idle state.
+            session = manager.get_current_session()
             if session is None:
-                return None
-        playback_info = session.get_playback_info()
-        if playback_info.playback_status != _PlaybackStatus.PLAYING:
-            # Current session is paused — check other sessions for one that is playing.
-            for s in manager.get_sessions():
-                pi = s.get_playback_info()
-                if pi.playback_status == _PlaybackStatus.PLAYING:
-                    session = s
-                    break
+                session = sessions[0]
         props = await session.try_get_media_properties_async()
         if props is None:
             return None
@@ -97,18 +128,35 @@ async def _gsmtc_get_media_info() -> dict | None:
                 thumbnail_bytes = bytes(data)
             except Exception:  # noqa: BLE001
                 pass
+        duration_seconds: float | None = None
+        try:
+            timeline = session.get_timeline_properties()
+            if timeline is not None:
+                raw = (timeline.end_time - timeline.start_time).total_seconds()
+                duration_seconds = raw if raw > 0 else None
+        except Exception:  # noqa: BLE001
+            pass
+        source_app = ""
+        try:
+            source_app = session.source_app_user_model_id or ""
+        except Exception:  # noqa: BLE001
+            pass
         return {
             "title": props.title or "",
             "artist": props.artist or "",
             "album_title": props.album_title or "",
             "is_playing": is_playing,
             "thumbnail_bytes": thumbnail_bytes,
+            "duration_seconds": duration_seconds,
+            "source_app": source_app,
         }
     except Exception:  # noqa: BLE001
         return None
 
 
-def _get_media_info_sync() -> dict | None:
+def _get_media_info_sync(
+    priority_sources: list[str] | None = None,
+) -> dict | None:
     """
     Synchronous wrapper around ``_gsmtc_get_media_info``.
 
@@ -117,7 +165,7 @@ def _get_media_info_sync() -> dict | None:
     Returns the same value as ``_gsmtc_get_media_info``, or ``None`` on error.
     """
     try:
-        return asyncio.run(_gsmtc_get_media_info())
+        return asyncio.run(_gsmtc_get_media_info(priority_sources=priority_sources))
     except Exception:  # noqa: BLE001
         return None
 
@@ -130,6 +178,7 @@ async def _gsmtc_event_watcher(
     emit_fn: Callable[[dict | None], None],
     stop_event: threading.Event,
     on_track_change_fn: Callable[[], None] | None = None,
+    get_priority_fn: Callable[[], list[str] | None] | None = None,
 ) -> None:
     """
     Async event-driven watcher that calls ``emit_fn`` on every track or playback change.
@@ -225,7 +274,8 @@ async def _gsmtc_event_watcher(
                 # Event fired — let rapid follow-up events accumulate before querying.
                 await asyncio.sleep(COALESCE_S)
                 trigger.clear()
-            info = await _gsmtc_get_media_info()
+            priority = get_priority_fn() if get_priority_fn is not None else None
+            info = await _gsmtc_get_media_info(priority_sources=priority)
             emit_fn(info)
     finally:
         try:
@@ -244,6 +294,7 @@ def run_gsmtc_watcher(
     emit_fn: Callable[[dict | None], None],
     stop_event: threading.Event,
     on_track_change_fn: Callable[[], None] | None = None,
+    get_priority_fn: Callable[[], list[str] | None] | None = None,
 ) -> None:
     """
     Run the GSMTC watcher and block until ``stop_event`` is set.
@@ -263,15 +314,24 @@ def run_gsmtc_watcher(
         query.  Will be called from the background thread.
     stop_event:
         Threading event used to signal the watcher to shut down cleanly.
+    get_priority_fn:
+        Optional callable that returns the current priority source list each
+        time it is called.  When multiple sessions are playing simultaneously
+        the returned list (ordered highest-priority first) is used to pick
+        which session's metadata is reported.  Each entry is matched
+        case-insensitively as a substring of the session's AUMID.
     """
     if not _GSMTC_AVAILABLE:
         while not stop_event.wait(timeout=POLL_INTERVAL_MS / 1000):
-            emit_fn(_get_media_info_sync())
+            priority = get_priority_fn() if get_priority_fn is not None else None
+            emit_fn(_get_media_info_sync(priority_sources=priority))
         return
 
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(_gsmtc_event_watcher(emit_fn, stop_event, on_track_change_fn))
+        loop.run_until_complete(
+            _gsmtc_event_watcher(emit_fn, stop_event, on_track_change_fn, get_priority_fn)
+        )
     except Exception:  # noqa: BLE001
         pass
     finally:

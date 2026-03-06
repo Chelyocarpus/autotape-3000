@@ -349,4 +349,12 @@ APP_STYLESHEET = f"""
     QScrollBar::sub-page:horizontal {{
         background: none;
     }}
+    QToolTip {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_TEXT};
+        border: 1px solid {COLOR_BORDER};
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 9pt;
+    }}
 """
