@@ -1162,7 +1162,8 @@ class RecorderApp(QMainWindow):
         if not self._evt_log_visible:
             return
         if self._evt_log_table.rowCount() >= _EVTLOG_MAX_ROWS:
-            for _ in range(_EVTLOG_MAX_ROWS - _EVTLOG_TRIM_TO):
+            rows_to_remove = self._evt_log_table.rowCount() - _EVTLOG_TRIM_TO
+            for _ in range(rows_to_remove):
                 self._evt_log_table.removeRow(0)
         row = self._evt_log_table.rowCount()
         self._evt_log_table.insertRow(row)
