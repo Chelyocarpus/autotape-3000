@@ -179,6 +179,8 @@ async def _gsmtc_event_watcher(
     stop_event: threading.Event,
     on_track_change_fn: Callable[[], None] | None = None,
     get_priority_fn: Callable[[], list[str] | None] | None = None,
+    on_playback_change_fn: Callable[[], None] | None = None,
+    on_session_change_fn: Callable[[], None] | None = None,
 ) -> None:
     """
     Async event-driven watcher that calls ``emit_fn`` on every track or playback change.
@@ -212,6 +214,11 @@ async def _gsmtc_event_watcher(
 
     def _fire_playback() -> None:
         """Notify of a playback-state change (pause/resume) — trigger only."""
+        if on_playback_change_fn is not None:
+            try:
+                on_playback_change_fn()
+            except Exception:  # noqa: BLE001
+                pass
         loop.call_soon_threadsafe(trigger.set)
 
     def _fire_track() -> None:
@@ -245,6 +252,11 @@ async def _gsmtc_event_watcher(
     manager = await _MediaManager.request_async()
 
     def _on_session_changed(sender, args) -> None:  # noqa: ANN001
+        if on_session_change_fn is not None:
+            try:
+                on_session_change_fn()
+            except Exception:  # noqa: BLE001
+                pass
         loop.call_soon_threadsafe(_subscribe_sessions)
         _fire_playback()
 
@@ -295,6 +307,8 @@ def run_gsmtc_watcher(
     stop_event: threading.Event,
     on_track_change_fn: Callable[[], None] | None = None,
     get_priority_fn: Callable[[], list[str] | None] | None = None,
+    on_playback_change_fn: Callable[[], None] | None = None,
+    on_session_change_fn: Callable[[], None] | None = None,
 ) -> None:
     """
     Run the GSMTC watcher and block until ``stop_event`` is set.
@@ -330,7 +344,10 @@ def run_gsmtc_watcher(
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(
-            _gsmtc_event_watcher(emit_fn, stop_event, on_track_change_fn, get_priority_fn)
+            _gsmtc_event_watcher(
+                emit_fn, stop_event, on_track_change_fn, get_priority_fn,
+                on_playback_change_fn, on_session_change_fn,
+            )
         )
     except Exception:  # noqa: BLE001
         pass

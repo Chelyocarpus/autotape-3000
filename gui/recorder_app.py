@@ -91,6 +91,17 @@ _LOG_STATUS_COLORS: dict[str, str] = {
     "Error": COLOR_DANGER,
 }
 
+# Event log (GSMTC raw-event timeline in the Log tab)
+_EVTLOG_COLUMNS = ("Time", "Event", "Info")
+_EVTLOG_COLORS: dict[str, str] = {
+    "playback_info_changed":    "#5b9bd5",
+    "media_properties_changed": "#f0a040",
+    "session_changed":          "#b07ecb",
+    "poll_result":              "#6ab04c",
+}
+_EVTLOG_MAX_ROWS = 500   # trim oldest rows when this limit is reached
+_EVTLOG_TRIM_TO  = 400
+
 WINDOW_TITLE = "Autotape 3000"
 WINDOW_WIDTH = 520
 WINDOW_HEIGHT = 720
@@ -146,6 +157,12 @@ class RecorderApp(QMainWindow):
     _sig_track_changing = pyqtSignal()  # fires immediately on media_properties_changed, before coalesce
     _waveform_level = pyqtSignal(float)
 
+    # Per-event GSMTC signals — used to populate the event log table.
+    # Emitted from the background watcher thread; str payload is HH:MM:SS.mmm timestamp.
+    _sig_evt_playback_changed = pyqtSignal(str)   # playback_info_changed fired
+    _sig_evt_track_changed    = pyqtSignal(str)   # media_properties_changed fired
+    _sig_evt_session_changed  = pyqtSignal(str)   # current_session_changed fired
+
     # Signals used to marshal save-thread results back to the main thread.
     # Using signals is the correct PyQt6 mechanism for cross-thread callbacks;
     # it guarantees delivery on the receiver's thread (main thread) regardless
@@ -184,11 +201,7 @@ class RecorderApp(QMainWindow):
         self._media_watcher_thread: threading.Thread | None = None
         self._media_pending_start = False
         self._media_pause_timer: QTimer | None = None
-        # Set to True while a recording has been started early (before GSMTC
-        # metadata arrived).  Also used as a transition guard: while True, further
-        # media_properties_changed signals are ignored so rapid follow-up events
-        # (e.g. thumbnail arriving after title) don't kill the new recording.
-        self._early_started_recording: bool = False
+        self._evt_log_visible: bool = False
 
         self._elapsed_seconds: int = 0
         self._elapsed_timer = QTimer(self)
@@ -197,6 +210,9 @@ class RecorderApp(QMainWindow):
 
         self._media_info_ready.connect(self._media_poll)
         self._sig_track_changing.connect(self._on_track_changing)
+        self._sig_evt_playback_changed.connect(self._on_evt_playback_changed)
+        self._sig_evt_track_changed.connect(self._on_evt_track_changed)
+        self._sig_evt_session_changed.connect(self._on_evt_session_changed)
         self._sig_save_complete.connect(self._on_save_complete)
         self._sig_save_skipped.connect(self._on_save_skipped)
         self._sig_save_skipped_duplicate.connect(self._on_save_skipped_duplicate)
@@ -274,6 +290,24 @@ class RecorderApp(QMainWindow):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(0)
 
+        log_header = QWidget()
+        log_header_layout = QHBoxLayout(log_header)
+        log_header_layout.setContentsMargins(0, 0, 0, 2)
+        log_header_layout.setSpacing(4)
+        log_header_layout.addStretch()
+        log_copy_btn = QPushButton("Copy")
+        log_copy_btn.setFixedHeight(20)
+        log_copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        log_copy_btn.setToolTip("Copy all recording log rows to clipboard")
+        log_copy_btn.clicked.connect(self._copy_log)
+        log_header_layout.addWidget(log_copy_btn)
+        log_clear_btn = QPushButton("Clear")
+        log_clear_btn.setFixedHeight(20)
+        log_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        log_clear_btn.clicked.connect(lambda: self._log_table.setRowCount(0))
+        log_header_layout.addWidget(log_clear_btn)
+        layout.addWidget(log_header)
+
         self._log_table = QTableWidget(0, len(_LOG_COLUMNS))
         self._log_table.setHorizontalHeaderLabels(list(_LOG_COLUMNS))
         hh = self._log_table.horizontalHeader()
@@ -287,6 +321,43 @@ class RecorderApp(QMainWindow):
         self._log_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._log_table.setAlternatingRowColors(True)
         layout.addWidget(self._log_table)
+
+        # GSMTC event log — shows raw event timeline so the user can compare
+        # how different track-change methods (Next key vs. playlist click) fire.
+        # Hidden by default; add "evt_log_visible": true to settings.json to show it.
+        self._evt_log_header = QWidget()
+        evt_header_layout = QHBoxLayout(self._evt_log_header)
+        evt_header_layout.setContentsMargins(0, 6, 0, 2)
+        evt_header_layout.setSpacing(4)
+        evt_header_layout.addWidget(self._subtext_label("GSMTC Event Log"))
+        evt_header_layout.addStretch()
+        evt_copy_btn = QPushButton("Copy")
+        evt_copy_btn.setFixedHeight(20)
+        evt_copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        evt_copy_btn.setToolTip("Copy all event log rows to clipboard")
+        evt_copy_btn.clicked.connect(self._copy_event_log)
+        evt_header_layout.addWidget(evt_copy_btn)
+        evt_clear_btn = QPushButton("Clear")
+        evt_clear_btn.setFixedHeight(20)
+        evt_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        evt_clear_btn.clicked.connect(self._clear_event_log)
+        evt_header_layout.addWidget(evt_clear_btn)
+        layout.addWidget(self._evt_log_header)
+        self._evt_log_header.setVisible(False)
+
+        self._evt_log_table = QTableWidget(0, len(_EVTLOG_COLUMNS))
+        self._evt_log_table.setHorizontalHeaderLabels(list(_EVTLOG_COLUMNS))
+        evh = self._evt_log_table.horizontalHeader()
+        evh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        evh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        evh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        evh.setStretchLastSection(False)
+        self._evt_log_table.verticalHeader().setVisible(False)
+        self._evt_log_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._evt_log_table.setAlternatingRowColors(True)
+        self._evt_log_table.setMaximumHeight(145)
+        layout.addWidget(self._evt_log_table)
+        self._evt_log_table.setVisible(False)
         return tab
 
     def _build_record_tab(self) -> QWidget:
@@ -769,8 +840,6 @@ class RecorderApp(QMainWindow):
         if self._recorder is None or not self._recording:
             return
 
-        self._stop_requested = False
-        self._early_started_recording = False
         self._track_label.setText("\u2014")
 
         output_folder = self._output_edit.text().strip()
@@ -1084,78 +1153,98 @@ class RecorderApp(QMainWindow):
         self._media_status_lbl.setText("Idle")
         self._status("Media session watcher stopped.")
 
+    # ------------------------------------------------------------------
+    # GSMTC event log helpers
+    # ------------------------------------------------------------------
+
+    def _log_event(self, timestamp: str, event_type: str, info: str) -> None:
+        """Append one row to the GSMTC event log table (no-op when the log is hidden)."""
+        if not self._evt_log_visible:
+            return
+        if self._evt_log_table.rowCount() >= _EVTLOG_MAX_ROWS:
+            rows_to_remove = self._evt_log_table.rowCount() - _EVTLOG_TRIM_TO
+            for _ in range(rows_to_remove):
+                self._evt_log_table.removeRow(0)
+        row = self._evt_log_table.rowCount()
+        self._evt_log_table.insertRow(row)
+        color_hex = _EVTLOG_COLORS.get(event_type, COLOR_SUBTEXT)
+        for col, text in enumerate((timestamp, event_type, info)):
+            item = QTableWidgetItem(text)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if col == 1:
+                item.setForeground(QColor(color_hex))
+            self._evt_log_table.setItem(row, col, item)
+        self._evt_log_table.scrollToBottom()
+
+    def _clear_event_log(self) -> None:
+        self._evt_log_table.setRowCount(0)
+
+    @staticmethod
+    def _table_to_tsv(table: QTableWidget) -> str:
+        """Serialize all rows of *table* to a tab-separated string with a header line."""
+        cols = table.columnCount()
+        headers = [table.horizontalHeaderItem(c).text() for c in range(cols)]
+        lines = ["\t".join(headers)]
+        for row in range(table.rowCount()):
+            cells = []
+            for col in range(cols):
+                item = table.item(row, col)
+                cells.append(item.text() if item else "")
+            lines.append("\t".join(cells))
+        return "\n".join(lines)
+
+    def _copy_log(self) -> None:
+        QApplication.clipboard().setText(self._table_to_tsv(self._log_table))
+        self._status("Recording log copied to clipboard.")
+
+    def _copy_event_log(self) -> None:
+        QApplication.clipboard().setText(self._table_to_tsv(self._evt_log_table))
+        self._status("Event log copied to clipboard.")
+
+    def _on_evt_playback_changed(self, ts: str) -> None:
+        self._log_event(ts, "playback_info_changed", "")
+
+    def _on_evt_track_changed(self, ts: str) -> None:
+        self._log_event(ts, "media_properties_changed", "")
+
+    def _on_evt_session_changed(self, ts: str) -> None:
+        self._log_event(ts, "session_changed", "")
+
     def _media_watcher_loop(self) -> None:
+        def _ts() -> str:
+            return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+        def _on_track_change() -> None:
+            self._sig_evt_track_changed.emit(_ts())
+            self._sig_track_changing.emit()
+
+        def _on_playback_change() -> None:
+            self._sig_evt_playback_changed.emit(_ts())
+
+        def _on_session_change() -> None:
+            self._sig_evt_session_changed.emit(_ts())
+
         run_gsmtc_watcher(
             emit_fn=self._media_info_ready.emit,
             stop_event=self._media_watcher_stop,
-            on_track_change_fn=self._sig_track_changing.emit,
+            on_track_change_fn=_on_track_change,
             get_priority_fn=lambda: self._priority_sources,
+            on_playback_change_fn=_on_playback_change,
+            on_session_change_fn=_on_session_change,
         )
 
     def _on_track_changing(self) -> None:
-        """Called immediately when GSMTC fires media_properties_changed, before the
-        coalesce delay and metadata query.
+        """Stop the current recording immediately for a clean cut.
 
-        Stops the current recording right away so no audio bleeds into it from the
-        new song, then immediately starts a new recording with placeholder metadata
-        so the first beat of the new track is captured.  The real track info is
-        applied in-place by _media_poll once the GSMTC metadata has settled."""
+        The new recording is started by _media_poll once the incoming track title
+        is confirmed by a coalesced GSMTC query.  This avoids capturing audio
+        before Spotify actually switches its output, which can lag the first
+        media_properties_changed event by up to ~1 s on playlist-click changes.
+        """
         if not self._auto_record_chk.isChecked():
             return
-        # Guard: already in a transition — ignore rapid follow-up events (e.g.
-        # thumbnail arriving shortly after the title change).
-        if self._early_started_recording:
-            return
-
-        # Stop the current recording immediately.
         if self._recording:
             self._stop_recording()
-
-        # Honor a deferred stop request — do not start a new recording.
-        if self._stop_requested:
-            self._stop_requested = False
-            return
-
-        # Start capturing immediately with placeholder metadata.  Real values are
-        # filled in by _media_poll once the GSMTC query returns.
-        self._current_track_display = None
-        self._current_album = ""
-        self._current_reported_duration = None
-        self._output_filename = "_pending.wav"
-        self._start_recording()
-        if self._recording:
-            self._early_started_recording = True
-
-    def _apply_metadata_to_recording(self, display: str, info: dict) -> bool:
-        """Update filename and track info on the currently running early-started recording.
-
-        Checks for duplicates first.  Returns True if metadata was applied and the
-        recording should continue, or False if the track is a duplicate and the
-        recording has been discarded.
-        """
-        safe_name = _sanitize_filename(display)
-        output_folder = self._output_edit.text().strip()
-        convert_mp3 = self._convert_mp3_chk.isChecked()
-        final_ext = ".mp3" if convert_mp3 else ".wav"
-        resolved = resolve_output_path(output_folder, safe_name, final_ext, self._duplicate_mode)
-        if resolved is None:
-            self._stop_recording(discard=True)
-            self._log_skip_duplicate(safe_name, display)
-            return False
-        if convert_mp3:
-            self._output_filename = f"{safe_name}.wav"
-        else:
-            self._output_filename = os.path.basename(resolved)
-        self._current_track_display = display
-        self._current_album = info.get("album_title", "")
-        self._current_reported_duration = info.get("duration_seconds")
-        if info.get("thumbnail_bytes"):
-            self._apply_gsmtc_cover(info["thumbnail_bytes"])
-        elif self._cover_region_bbox is not None and not self._use_song_cover:
-            QTimer.singleShot(800, self._recapture_cover_art)
-        self._track_label.setText(display)
-        self._status(f"Recording: {display}")
-        return True
 
     def _media_start_recording(self) -> None:
         self._media_pending_start = False
@@ -1184,6 +1273,24 @@ class RecorderApp(QMainWindow):
             self._stop_recording()
 
     def _media_poll(self, info: dict | None) -> None:
+        # Log the coalesced poll result only when the track/state changes so the
+        # event log shows transitions rather than a constant stream of identical rows.
+        ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        if info is None:
+            _poll_key = "__none__"
+            _poll_label = "—"
+        elif info.get("is_playing"):
+            _t = info.get("title", "").strip()
+            _a = info.get("artist", "").strip()
+            _poll_key = f"playing|{_a}|{_t}"
+            _poll_label = f"{_a} - {_t}" if _a else _t or "playing"
+        else:
+            _poll_key = "__paused__"
+            _poll_label = "paused"
+        if _poll_key != getattr(self, "_evt_last_poll_key", None):
+            self._evt_last_poll_key = _poll_key
+            self._log_event(ts, "poll_result", _poll_label)
+
         if not self._auto_record_chk.isChecked():
             return
 
@@ -1215,11 +1322,6 @@ class RecorderApp(QMainWindow):
         self._media_status_lbl.setText(f"Playing: {display}{status_suffix}")
 
         if track_key == self._media_last_title:
-            if self._early_started_recording and not is_idle and self._recording:
-                # The early-start fired on a mid-song metadata update (e.g. thumbnail)
-                # rather than a genuine track change.  Update metadata in place.
-                self._early_started_recording = False
-                self._apply_metadata_to_recording(display, info)
             return
 
         self._media_last_title = track_key
@@ -1235,17 +1337,6 @@ class RecorderApp(QMainWindow):
 
         # New track is playing — cancel any pending pause-stop and switch.
         self._cancel_pause_stop()
-
-        if self._early_started_recording:
-            # A recording was already started early by _on_track_changing.
-            # Apply real metadata in place instead of doing a stop/restart.
-            self._early_started_recording = False
-            if self._stop_requested:
-                self._stop_requested = False
-                self._stop_recording(discard=True)
-                return
-            self._apply_metadata_to_recording(display, info)
-            return
 
         if self._recording:
             self._stop_recording()
@@ -1418,3 +1509,7 @@ class RecorderApp(QMainWindow):
         if (v := _get("priority_sources")) is not None and isinstance(v, list):
             self._priority_sources = [str(s) for s in v if str(s).strip()]
             self._priority_sources_edit.setText(", ".join(self._priority_sources))
+        if _get("evt_log_visible"):
+            self._evt_log_visible = True
+            self._evt_log_header.setVisible(True)
+            self._evt_log_table.setVisible(True)

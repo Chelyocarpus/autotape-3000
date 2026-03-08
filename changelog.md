@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-08
+
+### Added
+- **GSMTC Event Log** (Log tab): a live event timeline table below the recording log shows every raw GSMTC event as it fires — `playback_info_changed` (blue), `media_properties_changed` (orange), `session_changed` (purple), and post-coalesce `poll_result` (green) with millisecond timestamps (`HH:MM:SS.mmm`). This makes it easy to see exactly how different track-change methods (Next key, media button, or clicking a song in a playlist) produce different event sequences and to diagnose the ≈1 s bleed caused by `media_properties_changed` firing before Spotify’s audio output switches.
+- `on_playback_change_fn` parameter added to `run_gsmtc_watcher` and `_gsmtc_event_watcher`; the callable is invoked synchronously whenever `playback_info_changed` fires on any subscribed session.
+- `on_session_change_fn` parameter added to `run_gsmtc_watcher` and `_gsmtc_event_watcher`; the callable is invoked whenever `current_session_changed` fires on the session manager.
+- A **Clear** button in the event log header discards all accumulated rows.
+- Oldest rows are automatically pruned (kept at 400, trimmed when 500 is reached) to keep the table responsive during long sessions.
+
 ## [1.3.0] - 2026-03-06
 
 ### Added
