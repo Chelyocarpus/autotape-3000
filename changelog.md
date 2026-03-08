@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-08
+
+### Added
+- **Compact view** button (⊟/⊞) in the title bar. Clicking it collapses the window to just the song title and waveform strip (tabs and record controls hidden) at a reduced window height, then restores the full layout on a second click. The button glyph and tooltip update to reflect the current state.
+
+## [1.7.0] - 2026-03-08
+
+### Added
+- **Normalize to -14 LUFS** checkbox in the MP3 Export section. When enabled, an RMS-based gain scalar targeting the -14 LUFS streaming standard (EBU R128 / AES streaming) is applied to the audio before int16 quantisation and lameenc encoding. The gain is clamped such that the output never clips. The setting is persisted in `settings.json` under `normalize_lufs` and is only enabled when "Convert to MP3" is checked. (`LUFS_TARGET` constant and `_peak_normalization_gain` helper added to `core/converter.py`.)
+
+## [1.6.0] - 2026-03-08
+
+### Added
+- **Cover-art thumbnail column** in the recording Log tab: each log row now opens with a 24×24 px thumbnail showing the cover art that was embedded in the saved (or skipped) file. The image is decoded from the captured bytes at log time, so the thumbnail remains correct even if the artwork changes for a subsequent track. Rows without cover art display an empty cell. Row height is fixed at 28 px to accommodate the thumbnail cleanly.
+
+## [1.5.0] - 2026-03-08
+
+### Added
+- **Animated cassette icon** (`gui/cassette.py`): when recording is active the static title-bar icon is replaced by a tiny (~20 × 14 px) Tron-style cassette tape. Two SVG-drawn reels with three spokes each rotate continuously; rotation speed scales proportionally with the live audio RMS level so the reels visibly speed up during loud passages and coast to a near-stop during silence. The static icon is restored automatically when recording stops.
+
 ## [1.4.0] - 2026-03-08
 
 ### Added
