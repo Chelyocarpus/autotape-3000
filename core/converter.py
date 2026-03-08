@@ -19,7 +19,7 @@ LUFS_TARGET: float = -14.0
 def _peak_normalization_gain(data, lufs_target: float) -> float:
     """Compute a linear gain scalar that approximates the LUFS target.
 
-    Uses a simple RMS-based estimate: LUFS ≈ RMS_dBFS + 0.691 (a close
+    Uses a simple RMS-based estimate: LUFS ≈ RMS_dBFS − 0.691 (a close
     empirical offset for typical programme material).  This is not a true
     ITU-R BS.1770 measurement but is always safe — the result is clamped so
     the output never clips.

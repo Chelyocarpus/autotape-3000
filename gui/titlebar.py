@@ -76,6 +76,7 @@ class TitleBar(QWidget):
             btn.clicked.connect(slot)
             layout.addWidget(btn)
         self._compact_btn = self.findChild(QPushButton, "titleBarCompact")
+        self.set_compact(False)
 
     def set_compact(self, active: bool) -> None:
         """Update the compact button glyph to reflect the current view state."""

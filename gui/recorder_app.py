@@ -741,6 +741,8 @@ class RecorderApp(QMainWindow):
         # Column 2 — 24×24 cover-art thumbnail (placed after Time/Status).
         thumb_lbl = QLabel()
         thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if tooltip:
+            thumb_lbl.setToolTip(tooltip)
         if cover_art:
             pixmap = QPixmap()
             pixmap.loadFromData(cover_art)
