@@ -2,9 +2,11 @@
 
 import os
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStackedWidget, QWidget
+
+from gui.cassette import CassetteTapeWidget
 
 _ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
 
@@ -14,6 +16,8 @@ TITLEBAR_HEIGHT = 36
 # Unicode symbols used as button glyphs (typography, not emoji)
 _ICON_MINIMIZE = "\u2212"   # − MINUS SIGN
 _ICON_CLOSE    = "\u00d7"   # × MULTIPLICATION SIGN
+_ICON_COMPACT  = "\u229f"   # ⊟ SQUARED MINUS  (enter compact view)
+_ICON_EXPAND   = "\u229e"   # ⊞ SQUARED PLUS   (leave compact view)
 
 
 class TitleBar(QWidget):
@@ -24,6 +28,7 @@ class TitleBar(QWidget):
     exactly as with a native title bar.
     """
 
+    compact_toggle = pyqtSignal()  # emitted when the compact-view button is clicked
     def __init__(self, window: "QWidget") -> None:
         super().__init__(window)
         self._window = window
@@ -36,13 +41,22 @@ class TitleBar(QWidget):
         layout.setContentsMargins(14, 0, 4, 0)
         layout.setSpacing(0)
 
+        # Icon slot: index 0 = static pixmap, index 1 = animated cassette.
+        self._icon_stack = QStackedWidget()
+        self._icon_stack.setFixedSize(20, 20)
+
         icon_lbl = QLabel()
         icon_lbl.setObjectName("titleBarIcon")
         pixmap = QPixmap(_ICON_PATH)
         if not pixmap.isNull():
             icon_lbl.setPixmap(pixmap.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        icon_lbl.setContentsMargins(0, 0, 8, 0)
-        layout.addWidget(icon_lbl)
+        self._icon_stack.addWidget(icon_lbl)      # index 0 — idle
+
+        self._cassette = CassetteTapeWidget()
+        self._icon_stack.addWidget(self._cassette) # index 1 — recording
+
+        layout.addWidget(self._icon_stack)
+        layout.addSpacing(8)
 
         title_lbl = QLabel(self._window.windowTitle())
         title_lbl.setObjectName("titleBarTitle")
@@ -51,8 +65,9 @@ class TitleBar(QWidget):
         layout.addStretch()
 
         for obj_name, glyph, slot in (
-            ("titleBarMin",   _ICON_MINIMIZE, self._minimize),
-            ("titleBarClose", _ICON_CLOSE,    self._window.close),
+            ("titleBarCompact", _ICON_COMPACT, self.compact_toggle.emit),
+            ("titleBarMin",     _ICON_MINIMIZE, self._minimize),
+            ("titleBarClose",   _ICON_CLOSE,    self._window.close),
         ):
             btn = QPushButton(glyph)
             btn.setObjectName(obj_name)
@@ -60,6 +75,28 @@ class TitleBar(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
+        self._compact_btn = self.findChild(QPushButton, "titleBarCompact")
+        self.set_compact(False)
+
+    def set_compact(self, active: bool) -> None:
+        """Update the compact button glyph to reflect the current view state."""
+        if self._compact_btn:
+            self._compact_btn.setText(_ICON_EXPAND if active else _ICON_COMPACT)
+            tip = "Restore full view" if active else "Compact view"
+            self._compact_btn.setToolTip(tip)
+
+    # ------------------------------------------------------------------
+    # Recording state
+    # ------------------------------------------------------------------
+
+    def set_recording(self, active: bool) -> None:
+        """Swap to the animated cassette (recording) or static icon (idle)."""
+        self._icon_stack.setCurrentIndex(1 if active else 0)
+        self._cassette.set_recording(active)
+
+    def set_level(self, rms: float) -> None:
+        """Forward the current audio RMS level to the cassette reel animation."""
+        self._cassette.set_level(rms)
 
     # ------------------------------------------------------------------
     # Button actions

@@ -199,6 +199,18 @@ APP_STYLESHEET = f"""
         letter-spacing: 1px;
         text-transform: uppercase;
     }}
+    QPushButton#titleBarCompact {{
+        background: transparent;
+        border: none;
+        color: {COLOR_SUBTEXT};
+        font-size: 13pt;
+        border-radius: 0px;
+        padding: 0px;
+    }}
+    QPushButton#titleBarCompact:hover {{
+        background-color: {_SURFACE_HOVER};
+        color: {COLOR_TEXT};
+    }}
     QPushButton#titleBarMin {{
         background: transparent;
         border: none;

@@ -84,7 +84,7 @@ from utils.filename import (
 SAMPLE_RATES = [22050, 44100, 48000, 96000]
 CHANNEL_OPTIONS = [1, 2]
 
-_LOG_COLUMNS = ("Time", "Status", "Track", "Duration")
+_LOG_COLUMNS = ("Time", "Status", "", "Track", "Duration")
 _LOG_STATUS_COLORS: dict[str, str] = {
     "Saved": COLOR_SUCCESS,
     "Skipped": COLOR_WARNING,
@@ -105,6 +105,7 @@ _EVTLOG_TRIM_TO  = 400
 WINDOW_TITLE = "Autotape 3000"
 WINDOW_WIDTH = 520
 WINDOW_HEIGHT = 720
+COMPACT_HEIGHT = 190  # height when tabs/controls are hidden
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "settings.json")
 
@@ -167,12 +168,12 @@ class RecorderApp(QMainWindow):
     # Using signals is the correct PyQt6 mechanism for cross-thread callbacks;
     # it guarantees delivery on the receiver's thread (main thread) regardless
     # of which thread emits.
-    _sig_save_complete = pyqtSignal(str, float, str)           # path, duration, track
-    _sig_save_skipped = pyqtSignal(float, int, str)            # duration, min_s, track
-    _sig_save_skipped_duplicate = pyqtSignal(str, str)         # stem, track
-    _sig_save_skipped_dur_pct = pyqtSignal(float, float, int, str)   # actual_s, reported_s, pct, track
-    _sig_save_skipped_dur_abs = pyqtSignal(float, float, int, str)   # actual_s, reported_s, abs_s, track
-    _sig_save_error = pyqtSignal(str, str)                     # error, track
+    _sig_save_complete = pyqtSignal(str, float, str, object)           # path, duration, track, cover_art
+    _sig_save_skipped = pyqtSignal(float, int, str, object)            # duration, min_s, track, cover_art
+    _sig_save_skipped_duplicate = pyqtSignal(str, str, object)         # stem, track, cover_art
+    _sig_save_skipped_dur_pct = pyqtSignal(float, float, int, str, object)   # actual_s, reported_s, pct, track, cover_art
+    _sig_save_skipped_dur_abs = pyqtSignal(float, float, int, str, object)   # actual_s, reported_s, abs_s, track, cover_art
+    _sig_save_error = pyqtSignal(str, str, object)                     # error, track, cover_art
     _sig_ensure_btn_ready = pyqtSignal()
 
     def __init__(self) -> None:
@@ -202,6 +203,7 @@ class RecorderApp(QMainWindow):
         self._media_pending_start = False
         self._media_pause_timer: QTimer | None = None
         self._evt_log_visible: bool = False
+        self._is_compact: bool = False
 
         self._elapsed_seconds: int = 0
         self._elapsed_timer = QTimer(self)
@@ -230,6 +232,7 @@ class RecorderApp(QMainWindow):
 
         self._setup_window()
         self._build_ui()
+        self._waveform_level.connect(self._title_bar.set_level)
         self._populate_devices()
         self._load_config()
 
@@ -244,6 +247,14 @@ class RecorderApp(QMainWindow):
         )
         self.setFixedSize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
+    def _toggle_compact_view(self) -> None:
+        self._is_compact = not self._is_compact
+        self._tabs.setVisible(not self._is_compact)
+        self._controls_section.setVisible(not self._is_compact)
+        target_h = COMPACT_HEIGHT if self._is_compact else WINDOW_HEIGHT
+        self.setFixedSize(WINDOW_WIDTH, target_h)
+        self._title_bar.set_compact(self._is_compact)
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -256,25 +267,28 @@ class RecorderApp(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        outer.addWidget(TitleBar(self))
+        self._title_bar = TitleBar(self)
+        outer.addWidget(self._title_bar)
+        self._title_bar.compact_toggle.connect(self._toggle_compact_view)
 
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(16, 10, 16, 8)
         layout.setSpacing(10)
 
-        tabs = QTabWidget()
-        tabs.setIconSize(QSize(14, 14))
-        tabs.addTab(self._build_log_tab(), _icon("tab_log.svg"), "Log")
-        tabs.addTab(self._build_record_tab(), _icon("tab_record.svg"), "Record")
-        tabs.addTab(self._build_export_tab(), _icon("tab_export.svg"), "Export")
-        tabs.addTab(self._build_automation_tab(), _icon("tab_automation.svg"), "Automation")
-        layout.addWidget(tabs, 1)
+        self._tabs = QTabWidget()
+        self._tabs.setIconSize(QSize(14, 14))
+        self._tabs.addTab(self._build_log_tab(), _icon("tab_log.svg"), "Log")
+        self._tabs.addTab(self._build_record_tab(), _icon("tab_record.svg"), "Record")
+        self._tabs.addTab(self._build_export_tab(), _icon("tab_export.svg"), "Export")
+        self._tabs.addTab(self._build_automation_tab(), _icon("tab_automation.svg"), "Automation")
+        layout.addWidget(self._tabs, 1)
 
         layout.addWidget(self._track_label)
         layout.addWidget(self._waveform)
         layout.addSpacing(4)
-        layout.addWidget(self._build_controls_section(), alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._controls_section = self._build_controls_section()
+        layout.addWidget(self._controls_section, alignment=Qt.AlignmentFlag.AlignHCenter)
         outer.addWidget(content, 1)
 
         status_bar = QStatusBar()
@@ -290,33 +304,18 @@ class RecorderApp(QMainWindow):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(0)
 
-        log_header = QWidget()
-        log_header_layout = QHBoxLayout(log_header)
-        log_header_layout.setContentsMargins(0, 0, 0, 2)
-        log_header_layout.setSpacing(4)
-        log_header_layout.addStretch()
-        log_copy_btn = QPushButton("Copy")
-        log_copy_btn.setFixedHeight(20)
-        log_copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        log_copy_btn.setToolTip("Copy all recording log rows to clipboard")
-        log_copy_btn.clicked.connect(self._copy_log)
-        log_header_layout.addWidget(log_copy_btn)
-        log_clear_btn = QPushButton("Clear")
-        log_clear_btn.setFixedHeight(20)
-        log_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        log_clear_btn.clicked.connect(lambda: self._log_table.setRowCount(0))
-        log_header_layout.addWidget(log_clear_btn)
-        layout.addWidget(log_header)
-
         self._log_table = QTableWidget(0, len(_LOG_COLUMNS))
         self._log_table.setHorizontalHeaderLabels(list(_LOG_COLUMNS))
         hh = self._log_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         hh.setStretchLastSection(False)
+        self._log_table.setColumnWidth(2, 28)
         self._log_table.verticalHeader().setVisible(False)
+        self._log_table.verticalHeader().setDefaultSectionSize(28)
         self._log_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._log_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._log_table.setAlternatingRowColors(True)
@@ -552,9 +551,12 @@ class RecorderApp(QMainWindow):
 
     def _build_mp3_export_section(self) -> QGroupBox:
         box = QGroupBox("MP3 Export")
-        row = QHBoxLayout(box)
-        row.setContentsMargins(8, 8, 8, 8)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
 
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         self._convert_mp3_chk = QCheckBox("Convert to MP3")
         self._convert_mp3_chk.stateChanged.connect(self._on_convert_mp3_toggle)
         row.addWidget(self._convert_mp3_chk)
@@ -576,6 +578,11 @@ class RecorderApp(QMainWindow):
         self._mp3_quality_combo.setEnabled(False)
         row.addWidget(self._mp3_quality_combo)
         row.addStretch()
+        outer.addLayout(row)
+
+        self._normalize_lufs_chk = QCheckBox("Normalize to -14\u202fLUFS (streaming standard)")
+        self._normalize_lufs_chk.setEnabled(False)
+        outer.addWidget(self._normalize_lufs_chk)
 
         return box
 
@@ -725,20 +732,33 @@ class RecorderApp(QMainWindow):
         )
 
     def _log_entry(
-        self, status: str, track: str, duration: float, path: str = "", tooltip: str = ""
+        self, status: str, track: str, duration: float, path: str = "", tooltip: str = "",
+        cover_art: bytes | None = None,
     ) -> None:
         """Append one row to the recording log table."""
         row = self._log_table.rowCount()
         self._log_table.insertRow(row)
+        # Column 2 — 24×24 cover-art thumbnail (placed after Time/Status).
+        thumb_lbl = QLabel()
+        thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if tooltip:
+            thumb_lbl.setToolTip(tooltip)
+        if cover_art:
+            pixmap = QPixmap()
+            pixmap.loadFromData(cover_art)
+            if not pixmap.isNull():
+                thumb_lbl.setPixmap(
+                    pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                )
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
         dur_str = (
             f"{int(duration // 60)}:{int(duration % 60):02d}"
             if duration > 0
             else "—"
         )
-        values = (time_str, status, track or "—", dur_str)
         color_hex = _LOG_STATUS_COLORS.get(status, "#dde1f0")
-        for col, val in enumerate(values):
+        # Columns 0-1: Time, Status
+        for col, val in enumerate((time_str, status)):
             item = QTableWidgetItem(val)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if col == 1:
@@ -746,6 +766,15 @@ class RecorderApp(QMainWindow):
             if tooltip:
                 item.setToolTip(tooltip)
             self._log_table.setItem(row, col, item)
+        # Column 2: thumbnail widget
+        self._log_table.setCellWidget(row, 2, thumb_lbl)
+        # Columns 3-4: Track, Duration
+        for col, val in enumerate((track or "—", dur_str)):
+            item = QTableWidgetItem(val)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if tooltip:
+                item.setToolTip(tooltip)
+            self._log_table.setItem(row, col + 3, item)
         self._log_table.scrollToBottom()
 
     # ------------------------------------------------------------------
@@ -825,6 +854,7 @@ class RecorderApp(QMainWindow):
         self._recorder.start()
         self._recording = True
         self._waveform.set_active(True)
+        self._title_bar.set_recording(True)
 
         self._record_btn.setText("Stop Recording")
         self._record_btn.setEnabled(True)
@@ -854,6 +884,7 @@ class RecorderApp(QMainWindow):
         convert_mp3 = self._convert_mp3_chk.isChecked()
         mp3_bitrate = int(self._mp3_bitrate_combo.currentText())
         mp3_quality = QUALITY_OPTIONS.get(self._mp3_quality_combo.currentText(), 5)
+        normalize_lufs = self._normalize_lufs_chk.isChecked()
         track_display = self._current_track_display
         album = self._current_album
         cover_art = self._cover_art_bytes
@@ -869,30 +900,30 @@ class RecorderApp(QMainWindow):
                     return  # Audio discarded — do not write to disk or emit any log signal.
                 duration = len(audio) / samplerate
                 if min_duration_s > 0 and duration < min_duration_s:
-                    self._sig_save_skipped.emit(duration, min_duration_s, track_display or "")
+                    self._sig_save_skipped.emit(duration, min_duration_s, track_display or "", cover_art)
                     return
                 if reported_duration is not None:
                     if dur_match_pct_enabled:
                         if _pct_deviation(duration, reported_duration) > dur_match_pct:
                             self._sig_save_skipped_dur_pct.emit(
-                                duration, reported_duration, dur_match_pct, track_display or ""
+                                duration, reported_duration, dur_match_pct, track_display or "", cover_art
                             )
                             return
                     if dur_match_abs_enabled:
                         if _abs_deviation(duration, reported_duration) > dur_match_abs_s:
                             self._sig_save_skipped_dur_abs.emit(
-                                duration, reported_duration, dur_match_abs_s, track_display or ""
+                                duration, reported_duration, dur_match_abs_s, track_display or "", cover_art
                             )
                             return
                 if convert_mp3:
                     final_ext = ".mp3"
                     resolved_mp3 = resolve_output_path(output_folder, output_stem, final_ext, duplicate_mode)
                     if resolved_mp3 is None:
-                        self._sig_save_skipped_duplicate.emit(output_stem, track_display or "")
+                        self._sig_save_skipped_duplicate.emit(output_stem, track_display or "", cover_art)
                         return
                     recorder.save(audio, output_path)
                     mp3_path = resolved_mp3
-                    convert_wav_to_mp3(output_path, mp3_path, mp3_bitrate, mp3_quality)
+                    convert_wav_to_mp3(output_path, mp3_path, mp3_bitrate, mp3_quality, normalize_lufs)
                     if track_display:
                         parts = track_display.split(" - ", 1)
                         artist = parts[0].strip() if len(parts) == 2 else ""
@@ -904,16 +935,16 @@ class RecorderApp(QMainWindow):
                         os.remove(output_path)
                     except OSError:
                         pass
-                    self._sig_save_complete.emit(mp3_path, duration, track_display or "")
+                    self._sig_save_complete.emit(mp3_path, duration, track_display or "", cover_art)
                 else:
                     resolved_wav = resolve_output_path(output_folder, output_stem, ".wav", duplicate_mode)
                     if resolved_wav is None:
-                        self._sig_save_skipped_duplicate.emit(output_stem, track_display or "")
+                        self._sig_save_skipped_duplicate.emit(output_stem, track_display or "", cover_art)
                         return
                     recorder.save(audio, resolved_wav)
-                    self._sig_save_complete.emit(resolved_wav, duration, track_display or "")
+                    self._sig_save_complete.emit(resolved_wav, duration, track_display or "", cover_art)
             except Exception as exc:  # noqa: BLE001
-                self._sig_save_error.emit(str(exc), track_display or "")
+                self._sig_save_error.emit(str(exc), track_display or "", cover_art)
             finally:
                 # Safety net: if an unexpected BaseException (e.g. SystemExit)
                 # bypasses the except block, always unblock the UI.
@@ -923,6 +954,7 @@ class RecorderApp(QMainWindow):
 
         self._recording = False
         self._waveform.set_active(False)
+        self._title_bar.set_recording(False)
         self._elapsed_timer.stop()
         self._record_btn.setText("Saving…")
         self._record_btn.setEnabled(False)
@@ -957,63 +989,63 @@ class RecorderApp(QMainWindow):
                 self._record_btn.setEnabled(True)
                 self._timer_label.setVisible(False)
 
-    def _on_save_complete(self, path: str, duration: float, track: str | None = None) -> None:
+    def _on_save_complete(self, path: str, duration: float, track: str | None = None, cover_art: bytes | None = None) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        self._log_entry("Saved", track or "", duration)
+        self._log_entry("Saved", track or "", duration, cover_art=cover_art)
         self._status(f"Saved {duration:.1f}s \u2192 {path}")
 
-    def _on_save_skipped(self, duration: float, min_duration_s: int, track: str | None = None) -> None:
+    def _on_save_skipped(self, duration: float, min_duration_s: int, track: str | None = None, cover_art: bytes | None = None) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
         mins, secs = divmod(min_duration_s, 60)
         reason = f"Duration {duration:.1f}s is shorter than minimum {mins:02d}:{secs:02d}"
-        self._log_entry("Skipped", track or "", duration, tooltip=reason)
+        self._log_entry("Skipped", track or "", duration, tooltip=reason, cover_art=cover_art)
         self._status(f"Skipped \u2014 {reason}")
 
     def _on_save_skipped_dur_pct(
-        self, actual: float, reported: float, threshold_pct: int, track: str | None = None
+        self, actual: float, reported: float, threshold_pct: int, track: str | None = None, cover_art: bytes | None = None
     ) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
         reason = _dur_skip_pct_reason(actual, reported, threshold_pct)
-        self._log_entry("Skipped", track or "", actual, tooltip=reason)
+        self._log_entry("Skipped", track or "", actual, tooltip=reason, cover_art=cover_art)
         self._status(f"Skipped \u2014 {reason}")
 
     def _on_save_skipped_dur_abs(
-        self, actual: float, reported: float, threshold_abs_s: int, track: str | None = None
+        self, actual: float, reported: float, threshold_abs_s: int, track: str | None = None, cover_art: bytes | None = None
     ) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
         reason = _dur_skip_abs_reason(actual, reported, threshold_abs_s)
-        self._log_entry("Skipped", track or "", actual, tooltip=reason)
+        self._log_entry("Skipped", track or "", actual, tooltip=reason, cover_art=cover_art)
         self._status(f"Skipped \u2014 {reason}")
 
-    def _on_save_skipped_duplicate(self, stem: str, track: str | None = None) -> None:
+    def _on_save_skipped_duplicate(self, stem: str, track: str | None = None, cover_art: bytes | None = None) -> None:
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        self._log_skip_duplicate(stem, track or stem)
+        self._log_skip_duplicate(stem, track or stem, cover_art=cover_art)
 
-    def _log_skip_duplicate(self, stem: str, display: str) -> None:
+    def _log_skip_duplicate(self, stem: str, display: str, cover_art: bytes | None = None) -> None:
         """Log a duplicate-skip entry and update the status bar."""
-        self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {stem} already exists")
+        self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {stem} already exists", cover_art=cover_art)
         self._status(f"Skipped duplicate \u2014 {stem} already exists")
 
-    def _on_save_error(self, error: str, track: str | None = None) -> None:
+    def _on_save_error(self, error: str, track: str | None = None, cover_art: bytes | None = None) -> None:
         self._record_btn.setText("Start Recording")
         self._set_record_btn_idle()
         self._record_btn.setEnabled(True)
-        self._log_entry("Error", track or "", 0.0)
+        self._log_entry("Error", track or "", 0.0, cover_art=cover_art)
         self._status(f"Error: {error}")
         QMessageBox.critical(self, "Save Error", error)
 
@@ -1027,6 +1059,7 @@ class RecorderApp(QMainWindow):
         enabled = self._convert_mp3_chk.isChecked()
         self._mp3_bitrate_combo.setEnabled(enabled)
         self._mp3_quality_combo.setEnabled(enabled)
+        self._normalize_lufs_chk.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     # Cover art
@@ -1366,9 +1399,13 @@ class RecorderApp(QMainWindow):
         if info.get("thumbnail_bytes"):
             self._apply_gsmtc_cover(info["thumbnail_bytes"])
         elif self._use_song_cover:
-            # Song-cover mode but no thumbnail yet — leave cover_art_bytes as-is;
-            # the next track event that includes a thumbnail will fill it in.
-            pass
+            # No thumbnail for this track yet — clear stale art from the
+            # previous track so it isn't attributed to this one.  If the
+            # media session later sends a thumbnail for this track,
+            # _apply_gsmtc_cover will populate it then.
+            self._cover_art_bytes = None
+            self._cover_label.setPixmap(QPixmap())
+            self._cover_label.setText("none")
         elif self._cover_region_bbox is not None:
             QTimer.singleShot(800, self._recapture_cover_art)
         self._media_pending_start = True
@@ -1423,6 +1460,7 @@ class RecorderApp(QMainWindow):
             "convert_mp3": self._convert_mp3_chk.isChecked(),
             "mp3_bitrate": int(self._mp3_bitrate_combo.currentText()),
             "mp3_quality": self._mp3_quality_combo.currentText(),
+            "normalize_lufs": self._normalize_lufs_chk.isChecked(),
             "output_folder": self._output_edit.text(),
             "auto_record": self._auto_record_chk.isChecked(),
             "duplicate_mode": self._duplicate_mode,
@@ -1473,6 +1511,8 @@ class RecorderApp(QMainWindow):
             self._mp3_bitrate_combo.setCurrentText(str(int(v)))
         if (v := _get("mp3_quality")) is not None:
             self._mp3_quality_combo.setCurrentText(str(v))
+        if (v := _get("normalize_lufs")) is not None:
+            self._normalize_lufs_chk.setChecked(bool(v))
         if (v := _get("output_folder")) is not None:
             self._output_edit.setText(str(v))
         elif (v := _get("output_path")) is not None:
