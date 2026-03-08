@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-08
+
+### Added
+- **Log tab: double-click to reveal in Explorer** — double-clicking a "Saved" row opens the containing folder with the file selected (`explorer /select,"path"`). Only active for "Saved" rows; double-clicking "Skipped" or "Error" rows is a no-op.
+- **Log tab: right-click context menu** — right-clicking any log row shows a context menu with three actions: **Open folder** (enabled only for "Saved" rows with an existing path), **Copy path** (copies the full file path to the clipboard), and **Copy track name** (copies the track name to the clipboard). Unavailable actions are shown disabled rather than hidden.
+- **Log tab: track search** — a search field above the recording log filters visible rows in real-time as the user types (case-insensitive substring match on the Track column). Rows that do not match are hidden instantly; clearing the field restores all rows. Newly added log entries are also hidden immediately if they do not match an active filter.
+- **Log tab: Export CSV** — an "Export CSV" button next to the search field dumps the full session log (Time, Status, Track, Duration columns) to a user-chosen `.csv` file via a save dialog. Both controls sit in a compact 24 px toolbar that takes space from the log table rather than the window height.
+- **Disk space indicator** in the Output Folder section (Record tab): a label below the folder path displays available free space (e.g. `↓ 234 GB free`) using `shutil.disk_usage`. The label turns red when free space is below 1 GB. It updates live as the user types a path, walking up to the nearest existing ancestor directory so it stays informative while a new path is being entered. The label also refreshes on startup after the saved folder is restored from `settings.json`.
+- **Always Skip list** in the Automation tab. Users can define patterns (by Artist, Title, or Album) that cause matching tracks to be automatically skipped when auto-record is active. Each rule performs a case-insensitive substring match. Patterns are added via a combo box (Artist / Title / Album), a text field, and an "Add" button (or pressing Enter); selected entries are removed with the "Remove" button. The list is persisted in `settings.json` under `skip_patterns`. Skipped tracks are logged as "Skipped" in the Log tab with the matched rule shown as a tooltip, and the status bar identifies the matching pattern.
+
+### Fixed
+- **Context menu styling** — added `QMenu` rules to the app stylesheet so the right-click context menu uses the app's dark indigo theme (surface background, accent-colour hover highlight, muted disabled items, themed separator) instead of the Windows system default.
+- **MP3 conversion progress** — a slim 4 px `QProgressBar` below the record button now shows accurate 0→100 % progress during MP3 encoding. The `lameenc` encode loop is chunked (≈1 % of total frames per step) so the main thread receives progress signals throughout the conversion. The bar appears only when saving as MP3 and disappears automatically on completion, error, or skip.
+
 ## [1.8.0] - 2026-03-08
 
 ### Added

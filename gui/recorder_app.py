@@ -1,9 +1,12 @@
 ﻿"""Main recorder application window - PyQt6 UI."""
 
+import csv
 import datetime
 import io
 import json
 import os
+import shutil
+import subprocess
 import threading
 
 import numpy as np
@@ -21,9 +24,14 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStatusBar,
@@ -82,6 +90,8 @@ from utils.filename import (
 )
 
 SAMPLE_RATES = [22050, 44100, 48000, 96000]
+
+DISK_SPACE_LOW_BYTES = 1 * 1024 ** 3  # 1 GB threshold for red warning
 CHANNEL_OPTIONS = [1, 2]
 
 _LOG_COLUMNS = ("Time", "Status", "", "Track", "Duration")
@@ -108,6 +118,18 @@ WINDOW_HEIGHT = 720
 COMPACT_HEIGHT = 190  # height when tabs/controls are hidden
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "settings.json")
+
+
+def _explorer_select(path: str) -> None:
+    """Open Windows Explorer with *path* highlighted.
+
+    The canonical form is a plain string passed directly to Popen — Windows
+    finds explorer.exe on PATH and passes the rest as its raw command line,
+    which is what explorer's own parser requires for /select to work.
+    Backslashes are required; os.path.normpath converts any forward slashes.
+    """
+    norm = os.path.normpath(path)
+    subprocess.Popen(f'explorer /select,"{norm}"')  # noqa: S603
 
 
 def _format_source_app(source_app: str) -> str:
@@ -175,6 +197,7 @@ class RecorderApp(QMainWindow):
     _sig_save_skipped_dur_abs = pyqtSignal(float, float, int, str, object)   # actual_s, reported_s, abs_s, track, cover_art
     _sig_save_error = pyqtSignal(str, str, object)                     # error, track, cover_art
     _sig_ensure_btn_ready = pyqtSignal()
+    _sig_save_progress = pyqtSignal(int)  # 0–100, emitted from save thread during MP3 encoding
 
     def __init__(self) -> None:
         super().__init__()
@@ -196,6 +219,7 @@ class RecorderApp(QMainWindow):
         self._stop_requested: bool = False
         self._current_reported_duration: float | None = None
         self._priority_sources: list[str] = ["Spotify", "Firefox"]
+        self._skip_patterns: list[dict] = []
 
         self._media_last_title: str | None = None
         self._media_watcher_stop = threading.Event()
@@ -302,7 +326,24 @@ class RecorderApp(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(4)
+
+        # Search / export toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(4)
+        self._log_search_edit = QLineEdit()
+        self._log_search_edit.setPlaceholderText("Search tracks…")
+        self._log_search_edit.setClearButtonEnabled(True)
+        self._log_search_edit.textChanged.connect(self._on_log_search)
+        toolbar.addWidget(self._log_search_edit, 1)
+        export_btn = QPushButton("Export CSV")
+        export_btn.setFixedHeight(24)
+        export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        export_btn.setToolTip("Export session log to a CSV file")
+        export_btn.clicked.connect(self._export_log_csv)
+        toolbar.addWidget(export_btn)
+        layout.addLayout(toolbar)
 
         self._log_table = QTableWidget(0, len(_LOG_COLUMNS))
         self._log_table.setHorizontalHeaderLabels(list(_LOG_COLUMNS))
@@ -319,6 +360,9 @@ class RecorderApp(QMainWindow):
         self._log_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._log_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._log_table.setAlternatingRowColors(True)
+        self._log_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._log_table.customContextMenuRequested.connect(self._on_log_context_menu)
+        self._log_table.cellDoubleClicked.connect(self._on_log_row_double_clicked)
         layout.addWidget(self._log_table)
 
         # GSMTC event log — shows raw event timeline so the user can compare
@@ -381,17 +425,24 @@ class RecorderApp(QMainWindow):
         return tab
 
     def _build_automation_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 8, 0, 0)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(8)
         layout.addWidget(self._build_auto_record_section())
         layout.addWidget(self._build_source_priority_section())
         layout.addWidget(self._build_duplicate_section())
         layout.addWidget(self._build_min_duration_section())
         layout.addWidget(self._build_duration_match_section())
+        layout.addWidget(self._build_always_skip_section())
         layout.addStretch()
-        return tab
+
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        return scroll
 
     def _build_source_priority_section(self) -> QGroupBox:
         box = QGroupBox("Source Priority")
@@ -500,6 +551,70 @@ class RecorderApp(QMainWindow):
 
         return box
 
+    def _build_always_skip_section(self) -> QGroupBox:
+        box = QGroupBox("Always Skip")
+        col = QVBoxLayout(box)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(6)
+
+        hint = QLabel("Skip tracks whose artist, title, or album contains a pattern (case-insensitive).")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        col.addWidget(hint)
+
+        self._skip_list = QListWidget()
+        self._skip_list.setFixedHeight(80)
+        self._skip_list.setAlternatingRowColors(True)
+        self._skip_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        col.addWidget(self._skip_list)
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(4)
+
+        self._skip_field_combo = QComboBox()
+        self._skip_field_combo.addItems(["Artist", "Title", "Album"])
+        self._skip_field_combo.setFixedWidth(84)
+        add_row.addWidget(self._skip_field_combo)
+
+        self._skip_pattern_edit = QLineEdit()
+        self._skip_pattern_edit.setPlaceholderText("Pattern to match…")
+        self._skip_pattern_edit.returnPressed.connect(self._on_skip_pattern_add)
+        add_row.addWidget(self._skip_pattern_edit, 1)
+
+        add_btn = QPushButton("Add")
+        add_btn.setIcon(_icon("btn_add.svg"))
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setMinimumWidth(68)
+        add_btn.clicked.connect(self._on_skip_pattern_add)
+        add_row.addWidget(add_btn)
+
+        remove_btn = QPushButton("Remove")
+        remove_btn.setIcon(_icon("btn_clear.svg"))
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.setMinimumWidth(84)
+        remove_btn.clicked.connect(self._on_skip_pattern_remove)
+        add_row.addWidget(remove_btn)
+
+        col.addLayout(add_row)
+        return box
+
+    def _on_skip_pattern_add(self) -> None:
+        pattern = self._skip_pattern_edit.text().strip()
+        if not pattern:
+            return
+        field = self._skip_field_combo.currentText().lower()
+        entry = {"field": field, "pattern": pattern}
+        self._skip_patterns.append(entry)
+        self._skip_list.addItem(QListWidgetItem(f"{field.capitalize()}: {pattern}"))
+        self._skip_pattern_edit.clear()
+
+    def _on_skip_pattern_remove(self) -> None:
+        row = self._skip_list.currentRow()
+        if row < 0:
+            return
+        self._skip_list.takeItem(row)
+        del self._skip_patterns[row]
+
     def _build_device_section(self) -> QGroupBox:
         box = QGroupBox("Audio Device")
         row = QHBoxLayout(box)
@@ -526,7 +641,7 @@ class RecorderApp(QMainWindow):
         self._samplerate_combo = QComboBox()
         self._samplerate_combo.addItems([str(r) for r in SAMPLE_RATES])
         self._samplerate_combo.setCurrentText(str(DEFAULT_SAMPLERATE))
-        self._samplerate_combo.setFixedWidth(80)
+        self._samplerate_combo.setFixedWidth(92)
         row1.addWidget(self._samplerate_combo)
         row1.addSpacing(12)
 
@@ -534,7 +649,7 @@ class RecorderApp(QMainWindow):
         self._channels_combo = QComboBox()
         self._channels_combo.addItems([str(c) for c in CHANNEL_OPTIONS])
         self._channels_combo.setCurrentText(str(DEFAULT_CHANNELS))
-        self._channels_combo.setFixedWidth(55)
+        self._channels_combo.setFixedWidth(67)
         row1.addWidget(self._channels_combo)
         row1.addSpacing(12)
 
@@ -542,7 +657,7 @@ class RecorderApp(QMainWindow):
         self._bit_depth_combo = QComboBox()
         self._bit_depth_combo.addItems([bd.label for bd in BIT_DEPTHS])
         self._bit_depth_combo.setCurrentText(DEFAULT_BIT_DEPTH.label)
-        self._bit_depth_combo.setFixedWidth(105)
+        self._bit_depth_combo.setFixedWidth(80)
         row1.addWidget(self._bit_depth_combo)
         row1.addStretch()
         col.addLayout(row1)
@@ -565,7 +680,7 @@ class RecorderApp(QMainWindow):
         self._mp3_bitrate_combo = QComboBox()
         self._mp3_bitrate_combo.addItems([str(b) for b in BITRATES])
         self._mp3_bitrate_combo.setCurrentText(str(DEFAULT_BITRATE))
-        self._mp3_bitrate_combo.setFixedWidth(60)
+        self._mp3_bitrate_combo.setFixedWidth(72)
         self._mp3_bitrate_combo.setEnabled(False)
         row.addWidget(self._mp3_bitrate_combo)
         row.addWidget(self._subtext_label("kbps"))
@@ -574,7 +689,7 @@ class RecorderApp(QMainWindow):
         self._mp3_quality_combo = QComboBox()
         self._mp3_quality_combo.addItems(list(QUALITY_OPTIONS.keys()))
         self._mp3_quality_combo.setCurrentText(DEFAULT_QUALITY)
-        self._mp3_quality_combo.setFixedWidth(130)
+        self._mp3_quality_combo.setFixedWidth(142)
         self._mp3_quality_combo.setEnabled(False)
         row.addWidget(self._mp3_quality_combo)
         row.addStretch()
@@ -627,10 +742,14 @@ class RecorderApp(QMainWindow):
 
     def _build_output_section(self) -> QGroupBox:
         box = QGroupBox("Output Folder")
-        row = QHBoxLayout(box)
-        row.setContentsMargins(8, 8, 8, 8)
+        col = QVBoxLayout(box)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(4)
 
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         self._output_edit = QLineEdit(os.path.expanduser("~"))
+        self._output_edit.textChanged.connect(self._update_disk_space)
         row.addWidget(self._output_edit, 1)
 
         browse_btn = QPushButton("Browse")
@@ -638,6 +757,12 @@ class RecorderApp(QMainWindow):
         browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_btn.clicked.connect(self._browse_output)
         row.addWidget(browse_btn)
+        col.addLayout(row)
+
+        self._disk_space_lbl = QLabel()
+        self._disk_space_lbl.setObjectName("hint")
+        col.addWidget(self._disk_space_lbl)
+        self._update_disk_space(self._output_edit.text())
         return box
 
     def _build_auto_record_section(self) -> QGroupBox:
@@ -651,14 +776,18 @@ class RecorderApp(QMainWindow):
         self._auto_record_chk.setEnabled(_GSMTC_AVAILABLE)
         self._auto_record_chk.stateChanged.connect(self._on_auto_record_toggle)
         row1.addWidget(self._auto_record_chk)
+        row1.addStretch()
+        col.addLayout(row1)
 
         self._media_status_lbl = QLabel(
             "Not available (winsdk missing)" if not _GSMTC_AVAILABLE else "Idle"
         )
         self._media_status_lbl.setObjectName("subtext")
-        row1.addWidget(self._media_status_lbl)
-        row1.addStretch()
-        col.addLayout(row1)
+        self._media_status_lbl.setWordWrap(True)
+        self._media_status_lbl.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        col.addWidget(self._media_status_lbl)
 
         return box
 
@@ -671,7 +800,7 @@ class RecorderApp(QMainWindow):
         self._duplicate_mode_combo = QComboBox()
         self._duplicate_mode_combo.addItems([DUPLICATE_MODE_LABELS[m] for m in DUPLICATE_MODES])
         self._duplicate_mode_combo.setCurrentText(DUPLICATE_MODE_LABELS[DEFAULT_DUPLICATE_MODE])
-        self._duplicate_mode_combo.setFixedWidth(130)
+        self._duplicate_mode_combo.setFixedWidth(142)
         self._duplicate_mode_combo.currentIndexChanged.connect(self._on_duplicate_mode_changed)
         row.addWidget(self._duplicate_mode_combo)
         row.addStretch()
@@ -698,6 +827,14 @@ class RecorderApp(QMainWindow):
         self._record_btn.clicked.connect(self._toggle_recording)
         self._set_record_btn_idle()
         col.addWidget(self._record_btn)
+
+        self._save_progress_bar = QProgressBar()
+        self._save_progress_bar.setRange(0, 100)
+        self._save_progress_bar.setTextVisible(False)
+        self._save_progress_bar.setFixedHeight(4)
+        self._save_progress_bar.setVisible(False)
+        self._sig_save_progress.connect(self._save_progress_bar.setValue)
+        col.addWidget(self._save_progress_bar)
         return container
 
     # ------------------------------------------------------------------
@@ -775,6 +912,16 @@ class RecorderApp(QMainWindow):
             if tooltip:
                 item.setToolTip(tooltip)
             self._log_table.setItem(row, col + 3, item)
+        # Store path and status on the Time item so double-click / context menu can retrieve them.
+        time_item = self._log_table.item(row, 0)
+        if time_item is not None:
+            time_item.setData(Qt.ItemDataRole.UserRole, (path, status))
+        # Apply the active search filter to the new row immediately.
+        filter_text = self._log_search_edit.text().strip().lower()
+        if filter_text:
+            track_item = self._log_table.item(row, 3)
+            match = filter_text in (track_item.text().lower() if track_item else "")
+            self._log_table.setRowHidden(row, not match)
         self._log_table.scrollToBottom()
 
     # ------------------------------------------------------------------
@@ -923,7 +1070,9 @@ class RecorderApp(QMainWindow):
                         return
                     recorder.save(audio, output_path)
                     mp3_path = resolved_mp3
-                    convert_wav_to_mp3(output_path, mp3_path, mp3_bitrate, mp3_quality, normalize_lufs)
+                    def _progress_cb(fraction: float) -> None:
+                        self._sig_save_progress.emit(int(fraction * 100))
+                    convert_wav_to_mp3(output_path, mp3_path, mp3_bitrate, mp3_quality, normalize_lufs, _progress_cb)
                     if track_display:
                         parts = track_display.split(" - ", 1)
                         artist = parts[0].strip() if len(parts) == 2 else ""
@@ -958,6 +1107,9 @@ class RecorderApp(QMainWindow):
         self._elapsed_timer.stop()
         self._record_btn.setText("Saving…")
         self._record_btn.setEnabled(False)
+        if convert_mp3:
+            self._save_progress_bar.setValue(0)
+            self._save_progress_bar.setVisible(True)
         self._status("Saving recording…")
 
     def _on_audio_data(self, data: np.ndarray) -> None:
@@ -988,13 +1140,15 @@ class RecorderApp(QMainWindow):
                 self._set_record_btn_idle()
                 self._record_btn.setEnabled(True)
                 self._timer_label.setVisible(False)
+                self._save_progress_bar.setVisible(False)
 
     def _on_save_complete(self, path: str, duration: float, track: str | None = None, cover_art: bytes | None = None) -> None:
+        self._save_progress_bar.setVisible(False)
         if not self._recording and not self._media_pending_start:
             self._record_btn.setText("Start Recording")
             self._set_record_btn_idle()
             self._record_btn.setEnabled(True)
-        self._log_entry("Saved", track or "", duration, cover_art=cover_art)
+        self._log_entry("Saved", track or "", duration, path=path, cover_art=cover_art)
         self._status(f"Saved {duration:.1f}s \u2192 {path}")
 
     def _on_save_skipped(self, duration: float, min_duration_s: int, track: str | None = None, cover_art: bytes | None = None) -> None:
@@ -1041,7 +1195,35 @@ class RecorderApp(QMainWindow):
         self._log_entry("Skipped", display, 0.0, tooltip=f"Duplicate: {stem} already exists", cover_art=cover_art)
         self._status(f"Skipped duplicate \u2014 {stem} already exists")
 
+    def _match_skip_patterns(self, title: str, artist: str, album: str) -> bool:
+        """Return True if any always-skip pattern matches the given track fields."""
+        field_map = {"artist": artist, "title": title, "album": album}
+        for entry in self._skip_patterns:
+            field = entry.get("field", "")
+            pattern = entry.get("pattern", "").lower()
+            if not pattern:
+                continue
+            if pattern in field_map.get(field, "").lower():
+                return True
+        return False
+
+    def _log_skip_pattern(self, display: str, title: str, artist: str, album: str) -> None:
+        """Log an always-skip entry and update the status bar."""
+        matched = []
+        field_map = {"artist": artist, "title": title, "album": album}
+        for entry in self._skip_patterns:
+            field = entry.get("field", "")
+            pattern = entry.get("pattern", "").lower()
+            if not pattern:
+                continue
+            if pattern in field_map.get(field, "").lower():
+                matched.append(f'{field.capitalize()}: "{entry["pattern"]}"')
+        reason = "; ".join(matched) if matched else "always-skip rule"
+        self._log_entry("Skipped", display, 0.0, tooltip=f"Always skip \u2014 {reason}")
+        self._status(f"Skipped \u2014 {reason}")
+
     def _on_save_error(self, error: str, track: str | None = None, cover_art: bytes | None = None) -> None:
+        self._save_progress_bar.setVisible(False)
         self._record_btn.setText("Start Recording")
         self._set_record_btn_idle()
         self._record_btn.setEnabled(True)
@@ -1226,6 +1408,87 @@ class RecorderApp(QMainWindow):
             lines.append("\t".join(cells))
         return "\n".join(lines)
 
+    def _on_log_row_double_clicked(self, row: int, _col: int) -> None:
+        """Open the containing folder with the saved file selected (Saved rows only)."""
+        time_item = self._log_table.item(row, 0)
+        if time_item is None:
+            return
+        data = time_item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        path, status = data
+        if status != "Saved" or not path:
+            return
+        _explorer_select(path)
+
+    def _on_log_context_menu(self, pos) -> None:  # noqa: ANN001
+        """Show Open folder / Copy path / Copy track name context menu."""
+        row = self._log_table.rowAt(pos.y())
+        if row < 0:
+            return
+        time_item = self._log_table.item(row, 0)
+        track_item = self._log_table.item(row, 3)
+        data = time_item.data(Qt.ItemDataRole.UserRole) if time_item else None
+        path, status = data if data else ("", "")
+        track_name = track_item.text() if track_item else ""
+
+        menu = QMenu(self)
+        open_action = menu.addAction("Open folder")
+        open_action.setEnabled(bool(path) and status == "Saved")
+        copy_path_action = menu.addAction("Copy path")
+        copy_path_action.setEnabled(bool(path))
+        copy_track_action = menu.addAction("Copy track name")
+        copy_track_action.setEnabled(bool(track_name) and track_name != "\u2014")
+
+        action = menu.exec(self._log_table.viewport().mapToGlobal(pos))
+        if action == open_action:
+            _explorer_select(path)
+        elif action == copy_path_action:
+            QApplication.clipboard().setText(path)
+            self._status(f"Path copied \u2192 {path}")
+        elif action == copy_track_action:
+            QApplication.clipboard().setText(track_name)
+            self._status(f"Track name copied \u2192 {track_name}")
+
+    def _on_log_search(self, text: str) -> None:
+        """Show only rows whose Track column contains *text* (case-insensitive)."""
+        needle = text.strip().lower()
+        for row in range(self._log_table.rowCount()):
+            if needle:
+                item = self._log_table.item(row, 3)
+                match = needle in (item.text().lower() if item else "")
+                self._log_table.setRowHidden(row, not match)
+            else:
+                self._log_table.setRowHidden(row, False)
+
+    def _export_log_csv(self) -> None:
+        """Export all log rows to a user-chosen CSV file."""
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Session Log",
+            os.path.join(os.path.expanduser("~"), "autotape_log.csv"),
+            "CSV files (*.csv)",
+        )
+        if not path:
+            return
+        csv_headers = ("Time", "Status", "Track", "Duration")
+        # Column indices that map to the CSV headers (skip the thumbnail column 2)
+        col_indices = (0, 1, 3, 4)
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(csv_headers)
+                for row in range(self._log_table.rowCount()):
+                    cells = []
+                    for col in col_indices:
+                        item = self._log_table.item(row, col)
+                        cells.append(item.text() if item else "")
+                    writer.writerow(cells)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+        self._status(f"Log exported \u2192 {path}")
+
     def _copy_log(self) -> None:
         QApplication.clipboard().setText(self._table_to_tsv(self._log_table))
         self._status("Recording log copied to clipboard.")
@@ -1378,6 +1641,11 @@ class RecorderApp(QMainWindow):
             self._stop_requested = False
             return
 
+        album_title = info.get("album_title", "")
+        if self._match_skip_patterns(title, artist, album_title):
+            self._log_skip_pattern(display, title, artist, album_title)
+            return
+
         safe_name = _sanitize_filename(display)
         output_folder = self._output_edit.text().strip()
         convert_mp3 = self._convert_mp3_chk.isChecked()
@@ -1414,6 +1682,40 @@ class RecorderApp(QMainWindow):
     # ------------------------------------------------------------------
     # File picker
     # ------------------------------------------------------------------
+
+    def _update_disk_space(self, path: str = "") -> None:
+        """Update the disk-space label next to the output folder field."""
+        folder = (path or self._output_edit.text()).strip()
+        # Walk up to the nearest existing ancestor so the label remains
+        # useful while the user is typing a new path.
+        probe = folder
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                probe = ""
+                break
+            probe = parent
+        if not probe:
+            self._disk_space_lbl.setText("")
+            return
+        try:
+            free = shutil.disk_usage(probe).free
+        except OSError:
+            self._disk_space_lbl.setText("")
+            return
+        if free >= 1024 ** 3:
+            text = f"\u2193 {free / 1024 ** 3:.0f} GB free"
+            color = COLOR_SUBTEXT
+        elif free >= 1024 ** 2:
+            text = f"\u2193 {free / 1024 ** 2:.0f} MB free"
+            color = COLOR_DANGER
+        else:
+            text = "\u2193 < 1 MB free"
+            color = COLOR_DANGER
+        if free < DISK_SPACE_LOW_BYTES:
+            color = COLOR_DANGER
+        self._disk_space_lbl.setText(text)
+        self._disk_space_lbl.setStyleSheet(f"color: {color};")
 
     def _browse_output(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -1471,6 +1773,7 @@ class RecorderApp(QMainWindow):
             "dur_match_abs_enabled": self._dur_match_abs_chk.isChecked(),
             "dur_match_abs_s": self._dur_match_abs_spin.value(),
             "priority_sources": self._priority_sources,
+            "skip_patterns": self._skip_patterns,
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
@@ -1549,7 +1852,17 @@ class RecorderApp(QMainWindow):
         if (v := _get("priority_sources")) is not None and isinstance(v, list):
             self._priority_sources = [str(s) for s in v if str(s).strip()]
             self._priority_sources_edit.setText(", ".join(self._priority_sources))
+        if (v := _get("skip_patterns")) is not None and isinstance(v, list):
+            self._skip_patterns = [
+                e for e in v
+                if isinstance(e, dict) and e.get("field") in ("artist", "title", "album") and e.get("pattern")
+            ]
+            self._skip_list.clear()
+            for entry in self._skip_patterns:
+                label = f'{entry["field"].capitalize()}: {entry["pattern"]}'
+                self._skip_list.addItem(QListWidgetItem(label))
         if _get("evt_log_visible"):
             self._evt_log_visible = True
             self._evt_log_header.setVisible(True)
             self._evt_log_table.setVisible(True)
+        self._update_disk_space(self._output_edit.text())
