@@ -1,5 +1,7 @@
 """WAV to MP3 conversion logic."""
 
+from collections.abc import Callable
+
 import soundfile as sf
 
 BITRATES: list[int] = [96, 128, 160, 192, 256, 320]
@@ -46,6 +48,7 @@ def convert_wav_to_mp3(
     bitrate: int,
     quality: int,
     normalize_lufs: bool = False,
+    progress_cb: Callable[[float], None] | None = None,
 ) -> float:
     """Convert a WAV file to MP3 and return the duration in seconds.
 
@@ -74,9 +77,21 @@ def convert_wav_to_mp3(
     encoder.set_quality(quality)
     encoder.silence()
 
-    # Encode in one shot; lameenc wants interleaved samples as bytes
-    mp3_data = encoder.encode(pcm.tobytes())
-    mp3_data += encoder.flush()
+    # Encode in chunks so the caller can report progress.
+    total_frames = pcm.shape[0]
+    if total_frames == 0:
+        return 0.0
+    chunk_frames = max(4096, total_frames // 100)
+    chunks = []
+    for offset in range(0, total_frames, chunk_frames):
+        chunk = pcm[offset : offset + chunk_frames]
+        chunks.append(encoder.encode(chunk.tobytes()))
+        if progress_cb:
+            progress_cb(min(1.0, (offset + chunk_frames) / total_frames))
+    chunks.append(encoder.flush())
+    mp3_data = b"".join(chunks)
+    if progress_cb:
+        progress_cb(1.0)
 
     with open(mp3_path, "wb") as fh:
         fh.write(mp3_data)

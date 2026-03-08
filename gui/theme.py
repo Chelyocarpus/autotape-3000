@@ -6,6 +6,7 @@ _ICON_DIR     = _ICONS_DIR.as_posix()
 _CHECK_SVG    = f"{_ICON_DIR}/check.svg"
 _ARROW_UP_SVG = f"{_ICON_DIR}/arrow_up.svg"
 _ARROW_DN_SVG = f"{_ICON_DIR}/arrow_down.svg"
+_ARROW_DN_SM  = f"{_ICON_DIR}/arrow_dn_sm.svg"
 
 # Deep indigo-slate palette — all hues drawn from the blue-purple family (240–265°)
 # with rose as a designed complementary danger color.
@@ -25,6 +26,7 @@ _ACCENT_HOVER   = "#6960e8"
 _WARNING_HOVER  = "#d4952a"
 _SURFACE_HOVER  = "#22223a"
 _DANGER_HOVER   = "#d94f65"
+_COLOR_INPUT    = "#21213a"   # text-input background — a step lighter than surface
 
 APP_STYLESHEET = f"""
     QWidget {{
@@ -55,7 +57,7 @@ APP_STYLESHEET = f"""
         color: {COLOR_TEXT};
         border: 1px solid {COLOR_BORDER};
         border-radius: 4px;
-        padding: 3px 6px;
+        padding: 3px 18px 3px 6px;
         selection-background-color: {COLOR_ACCENT};
     }}
     QComboBox:hover {{
@@ -72,10 +74,21 @@ APP_STYLESHEET = f"""
         border: 1px solid {COLOR_BORDER};
     }}
     QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
+        width: 16px;
         border: none;
+        border-left: 1px solid {COLOR_BORDER};
+        border-top-right-radius: 4px;
+        border-bottom-right-radius: 4px;
+    }}
+    QComboBox::down-arrow {{
+        image: url("{_ARROW_DN_SM}");
+        width: 10px;
+        height: 6px;
     }}
     QLineEdit {{
-        background-color: {COLOR_SURFACE};
+        background-color: {_COLOR_INPUT};
         color: {COLOR_TEXT};
         border: 1px solid {COLOR_BORDER};
         border-radius: 4px;
@@ -169,6 +182,16 @@ APP_STYLESHEET = f"""
         font-size: 11pt;
         font-weight: bold;
         padding: 10px 24px;
+    }}
+    QProgressBar {{
+        background-color: {COLOR_SURFACE};
+        border: none;
+        border-radius: 2px;
+        max-height: 4px;
+    }}
+    QProgressBar::chunk {{
+        background-color: {COLOR_ACCENT};
+        border-radius: 2px;
     }}
     QStatusBar {{
         background-color: {COLOR_SURFACE};
@@ -368,5 +391,30 @@ APP_STYLESHEET = f"""
         border-radius: 4px;
         padding: 4px 8px;
         font-size: 9pt;
+    }}
+    QMenu {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_TEXT};
+        border: 1px solid {COLOR_BORDER};
+        border-radius: 6px;
+        padding: 4px;
+        font-size: 10pt;
+    }}
+    QMenu::item {{
+        background-color: transparent;
+        padding: 6px 28px 6px 12px;
+        border-radius: 4px;
+    }}
+    QMenu::item:selected {{
+        background-color: {COLOR_ACCENT};
+        color: #ffffff;
+    }}
+    QMenu::item:disabled {{
+        color: {COLOR_SUBTEXT};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background-color: {COLOR_BORDER};
+        margin: 4px 8px;
     }}
 """
