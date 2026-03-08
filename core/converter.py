@@ -79,14 +79,17 @@ def convert_wav_to_mp3(
 
     # Encode in chunks so the caller can report progress.
     total_frames = pcm.shape[0]
+    if total_frames == 0:
+        return 0.0
     chunk_frames = max(4096, total_frames // 100)
-    mp3_data = b""
+    chunks = []
     for offset in range(0, total_frames, chunk_frames):
         chunk = pcm[offset : offset + chunk_frames]
-        mp3_data += encoder.encode(chunk.tobytes())
+        chunks.append(encoder.encode(chunk.tobytes()))
         if progress_cb:
             progress_cb(min(1.0, (offset + chunk_frames) / total_frames))
-    mp3_data += encoder.flush()
+    chunks.append(encoder.flush())
+    mp3_data = b"".join(chunks)
     if progress_cb:
         progress_cb(1.0)
 

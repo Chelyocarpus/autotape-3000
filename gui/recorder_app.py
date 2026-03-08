@@ -1197,7 +1197,7 @@ class RecorderApp(QMainWindow):
 
     def _match_skip_patterns(self, title: str, artist: str, album: str) -> bool:
         """Return True if any always-skip pattern matches the given track fields."""
-        field_map = {"artist": artist, "title": title, "album": album}
+        field_map = {"artist": artist or "", "title": title or "", "album": album or ""}
         for entry in self._skip_patterns:
             field = entry.get("field", "")
             pattern = entry.get("pattern", "").lower()
@@ -1210,7 +1210,7 @@ class RecorderApp(QMainWindow):
     def _log_skip_pattern(self, display: str, title: str, artist: str, album: str) -> None:
         """Log an always-skip entry and update the status bar."""
         matched = []
-        field_map = {"artist": artist, "title": title, "album": album}
+        field_map = {"artist": artist or "", "title": title or "", "album": album or ""}
         for entry in self._skip_patterns:
             field = entry.get("field", "")
             pattern = entry.get("pattern", "").lower()
