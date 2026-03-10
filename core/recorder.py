@@ -2,6 +2,7 @@
 
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import sounddevice as sd
 import soundfile as sf
@@ -12,6 +13,7 @@ DEFAULT_SAMPLERATE = 48000
 DEFAULT_CHANNELS = 2
 
 
+@dataclass(repr=False)
 class BitDepth:
     """Maps a human-readable label to a sounddevice dtype and a soundfile PCM subtype.
 
@@ -20,10 +22,9 @@ class BitDepth:
     and written by soundfile as PCM_24.
     """
 
-    def __init__(self, label: str, dtype: str, sf_subtype: str) -> None:
-        self.label = label
-        self.dtype = dtype
-        self.sf_subtype = sf_subtype
+    label: str
+    dtype: str
+    sf_subtype: str
 
     def __repr__(self) -> str:
         return f"BitDepth({self.label!r})"
@@ -38,14 +39,14 @@ BIT_DEPTHS: list[BitDepth] = [
 DEFAULT_BIT_DEPTH: BitDepth = BIT_DEPTHS[1]  # 24-bit
 
 
+@dataclass(repr=False)
 class AudioDevice:
     """Represents an audio input/output device."""
 
-    def __init__(self, index: int, name: str, max_input_channels: int, max_output_channels: int):
-        self.index = index
-        self.name = name
-        self.max_input_channels = max_input_channels
-        self.max_output_channels = max_output_channels
+    index: int
+    name: str
+    max_input_channels: int
+    max_output_channels: int
 
     def __repr__(self) -> str:
         return f"AudioDevice(index={self.index}, name={self.name!r})"

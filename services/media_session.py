@@ -13,7 +13,7 @@ all other sessions are searched for one that is actively playing.
 
 Requires the ``winrt-Windows.Media.Control`` and ``winrt-Windows.Storage.Streams``
 packages on Windows 10 or later.  If those packages are unavailable the module
-degrades gracefully: ``_GSMTC_AVAILABLE`` is set to ``False`` and the watcher falls
+degrades gracefully: ``GSMTC_AVAILABLE`` is set to ``False`` and the watcher falls
 back to a simple polling loop.
 """
 
@@ -30,9 +30,9 @@ try:
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as _PlaybackStatus,
     )
     from winrt.windows.storage.streams import Buffer, DataReader, InputStreamOptions
-    _GSMTC_AVAILABLE = True
+    GSMTC_AVAILABLE = True
 except ImportError:
-    _GSMTC_AVAILABLE = False
+    GSMTC_AVAILABLE = False
 
 
 def _pick_by_priority(
@@ -91,7 +91,7 @@ async def _gsmtc_get_media_info(
                 "source_app":      str,          # Source app AUMID of the chosen session.
             }
     """
-    if not _GSMTC_AVAILABLE:
+    if not GSMTC_AVAILABLE:
         return None
     try:
         manager = await _MediaManager.request_async()
@@ -335,7 +335,7 @@ def run_gsmtc_watcher(
         which session's metadata is reported.  Each entry is matched
         case-insensitively as a substring of the session's AUMID.
     """
-    if not _GSMTC_AVAILABLE:
+    if not GSMTC_AVAILABLE:
         while not stop_event.wait(timeout=POLL_INTERVAL_MS / 1000):
             priority = get_priority_fn() if get_priority_fn is not None else None
             emit_fn(_get_media_info_sync(priority_sources=priority))

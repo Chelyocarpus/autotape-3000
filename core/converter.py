@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+import lameenc
+import numpy as np
 import soundfile as sf
 
 BITRATES: list[int] = [96, 128, 160, 192, 256, 320]
@@ -26,8 +28,6 @@ def _peak_normalization_gain(data, lufs_target: float) -> float:
     ITU-R BS.1770 measurement but is always safe — the result is clamped so
     the output never clips.
     """
-    import numpy as np  # noqa: PLC0415
-
     rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
     if rms < 1e-9:
         return 1.0  # silence — nothing to do
@@ -57,9 +57,6 @@ def convert_wav_to_mp3(
     approximation before int16 quantisation.  The gain is clamped so the
     output never clips.
     """
-    import numpy as np  # noqa: PLC0415
-    import lameenc  # noqa: PLC0415
-
     data, samplerate = sf.read(wav_path, always_2d=True)
 
     if normalize_lufs:

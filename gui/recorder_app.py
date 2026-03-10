@@ -72,12 +72,12 @@ from gui.theme import (
     COLOR_SUBTEXT,
     COLOR_SUCCESS,
     COLOR_WARNING,
-    _ACCENT_HOVER,
-    _DANGER_HOVER,
-    _WARNING_HOVER,
+    ACCENT_HOVER,
+    DANGER_HOVER,
+    WARNING_HOVER,
 )
 from services.media_session import (
-    _GSMTC_AVAILABLE,
+    GSMTC_AVAILABLE,
     run_gsmtc_watcher,
 )
 from utils.filename import (
@@ -85,7 +85,7 @@ from utils.filename import (
     DEFAULT_DUPLICATE_MODE,
     DUPLICATE_MODE_LABELS,
     DUPLICATE_MODES,
-    _sanitize_filename,
+    sanitize_filename,
     resolve_output_path,
 )
 
@@ -93,6 +93,12 @@ SAMPLE_RATES = [22050, 44100, 48000, 96000]
 
 DISK_SPACE_LOW_BYTES = 1 * 1024 ** 3  # 1 GB threshold for red warning
 CHANNEL_OPTIONS = [1, 2]
+
+# Timing delays (milliseconds)
+_COVER_PICKER_HIDE_DELAY_MS = 150
+_RECAPTURE_COVER_ART_ON_LOAD_DELAY_MS = 200
+_RECAPTURE_COVER_ART_ON_TRACK_CHANGE_DELAY_MS = 800
+_PAUSE_DEBOUNCE_MS = 2500
 
 _LOG_COLUMNS = ("Time", "Status", "", "Track", "Duration")
 _LOG_STATUS_COLORS: dict[str, str] = {
@@ -466,7 +472,7 @@ class RecorderApp(QMainWindow):
         row.addWidget(self._priority_sources_edit, 1)
         col.addLayout(row)
 
-        if not _GSMTC_AVAILABLE:
+        if not GSMTC_AVAILABLE:
             unavail = QLabel("Requires winsdk (GSMTC unavailable)")
             unavail.setObjectName("hint")
             col.addWidget(unavail)
@@ -516,7 +522,7 @@ class RecorderApp(QMainWindow):
 
         row1 = QHBoxLayout()
         self._dur_match_pct_chk = QCheckBox("Skip if duration deviates by more than")
-        self._dur_match_pct_chk.setEnabled(_GSMTC_AVAILABLE)
+        self._dur_match_pct_chk.setEnabled(GSMTC_AVAILABLE)
         self._dur_match_pct_chk.stateChanged.connect(self._on_dur_match_pct_toggle)
         row1.addWidget(self._dur_match_pct_chk)
         self._dur_match_pct_spin = QSpinBox()
@@ -531,7 +537,7 @@ class RecorderApp(QMainWindow):
 
         row2 = QHBoxLayout()
         self._dur_match_abs_chk = QCheckBox("Skip if duration deviates by more than")
-        self._dur_match_abs_chk.setEnabled(_GSMTC_AVAILABLE)
+        self._dur_match_abs_chk.setEnabled(GSMTC_AVAILABLE)
         self._dur_match_abs_chk.stateChanged.connect(self._on_dur_match_abs_toggle)
         row2.addWidget(self._dur_match_abs_chk)
         self._dur_match_abs_spin = QSpinBox()
@@ -544,7 +550,7 @@ class RecorderApp(QMainWindow):
         row2.addStretch()
         col.addLayout(row2)
 
-        if not _GSMTC_AVAILABLE:
+        if not GSMTC_AVAILABLE:
             unavail = QLabel("Requires winsdk (GSMTC unavailable)")
             unavail.setObjectName("hint")
             col.addWidget(unavail)
@@ -773,14 +779,14 @@ class RecorderApp(QMainWindow):
 
         row1 = QHBoxLayout()
         self._auto_record_chk = QCheckBox("Auto-record tracks")
-        self._auto_record_chk.setEnabled(_GSMTC_AVAILABLE)
+        self._auto_record_chk.setEnabled(GSMTC_AVAILABLE)
         self._auto_record_chk.stateChanged.connect(self._on_auto_record_toggle)
         row1.addWidget(self._auto_record_chk)
         row1.addStretch()
         col.addLayout(row1)
 
         self._media_status_lbl = QLabel(
-            "Not available (winsdk missing)" if not _GSMTC_AVAILABLE else "Idle"
+            "Not available (winsdk missing)" if not GSMTC_AVAILABLE else "Idle"
         )
         self._media_status_lbl.setObjectName("subtext")
         self._media_status_lbl.setWordWrap(True)
@@ -849,24 +855,29 @@ class RecorderApp(QMainWindow):
 
     def _set_record_btn_idle(self) -> None:
         self._record_btn.setIcon(_icon("btn_record_start.svg"))
-        self._record_btn.setStyleSheet(
-            f"QPushButton#recordBtn {{ background-color: {COLOR_ACCENT}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
-            f"QPushButton#recordBtn:hover {{ background-color: {_ACCENT_HOVER}; }}"
-        )
+        self._set_record_btn_style(COLOR_ACCENT, ACCENT_HOVER)
 
     def _set_record_btn_recording(self) -> None:
         self._record_btn.setIcon(_icon("btn_record_stop.svg"))
-        self._record_btn.setStyleSheet(
-            f"QPushButton#recordBtn {{ background-color: {COLOR_DANGER}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
-            f"QPushButton#recordBtn:hover {{ background-color: {_DANGER_HOVER}; }}"
-        )
+        self._set_record_btn_style(COLOR_DANGER, DANGER_HOVER)
 
     def _set_record_btn_pending(self) -> None:
         self._record_btn.setIcon(_icon("btn_record_stop.svg"))
+        self._set_record_btn_style(COLOR_WARNING, WARNING_HOVER)
+
+    def _set_record_btn_style(self, color: str, hover_color: str) -> None:
+        """Set the record button stylesheet with the given colors."""
         self._record_btn.setStyleSheet(
-            f"QPushButton#recordBtn {{ background-color: {COLOR_WARNING}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
-            f"QPushButton#recordBtn:hover {{ background-color: {_WARNING_HOVER}; }}"
+            f"QPushButton#recordBtn {{ background-color: {color}; color: #ffffff; border: none; border-radius: 6px; font-size: 11pt; font-weight: bold; padding: 10px 24px; }}"
+            f"QPushButton#recordBtn:hover {{ background-color: {hover_color}; }}"
         )
+
+    def _reset_btn_if_idle(self) -> None:
+        """Reset the record button if not currently recording and not waiting for media session."""
+        if not self._recording and not self._media_pending_start:
+            self._record_btn.setText("Start Recording")
+            self._set_record_btn_idle()
+            self._record_btn.setEnabled(True)
 
     def _log_entry(
         self, status: str, track: str, duration: float, path: str = "", tooltip: str = "",
@@ -1144,18 +1155,12 @@ class RecorderApp(QMainWindow):
 
     def _on_save_complete(self, path: str, duration: float, track: str | None = None, cover_art: bytes | None = None) -> None:
         self._save_progress_bar.setVisible(False)
-        if not self._recording and not self._media_pending_start:
-            self._record_btn.setText("Start Recording")
-            self._set_record_btn_idle()
-            self._record_btn.setEnabled(True)
+        self._reset_btn_if_idle()
         self._log_entry("Saved", track or "", duration, path=path, cover_art=cover_art)
         self._status(f"Saved {duration:.1f}s \u2192 {path}")
 
     def _on_save_skipped(self, duration: float, min_duration_s: int, track: str | None = None, cover_art: bytes | None = None) -> None:
-        if not self._recording and not self._media_pending_start:
-            self._record_btn.setText("Start Recording")
-            self._set_record_btn_idle()
-            self._record_btn.setEnabled(True)
+        self._reset_btn_if_idle()
         mins, secs = divmod(min_duration_s, 60)
         reason = f"Duration {duration:.1f}s is shorter than minimum {mins:02d}:{secs:02d}"
         self._log_entry("Skipped", track or "", duration, tooltip=reason, cover_art=cover_art)
@@ -1164,10 +1169,7 @@ class RecorderApp(QMainWindow):
     def _on_save_skipped_dur_pct(
         self, actual: float, reported: float, threshold_pct: int, track: str | None = None, cover_art: bytes | None = None
     ) -> None:
-        if not self._recording and not self._media_pending_start:
-            self._record_btn.setText("Start Recording")
-            self._set_record_btn_idle()
-            self._record_btn.setEnabled(True)
+        self._reset_btn_if_idle()
         reason = _dur_skip_pct_reason(actual, reported, threshold_pct)
         self._log_entry("Skipped", track or "", actual, tooltip=reason, cover_art=cover_art)
         self._status(f"Skipped \u2014 {reason}")
@@ -1175,19 +1177,13 @@ class RecorderApp(QMainWindow):
     def _on_save_skipped_dur_abs(
         self, actual: float, reported: float, threshold_abs_s: int, track: str | None = None, cover_art: bytes | None = None
     ) -> None:
-        if not self._recording and not self._media_pending_start:
-            self._record_btn.setText("Start Recording")
-            self._set_record_btn_idle()
-            self._record_btn.setEnabled(True)
+        self._reset_btn_if_idle()
         reason = _dur_skip_abs_reason(actual, reported, threshold_abs_s)
         self._log_entry("Skipped", track or "", actual, tooltip=reason, cover_art=cover_art)
         self._status(f"Skipped \u2014 {reason}")
 
     def _on_save_skipped_duplicate(self, stem: str, track: str | None = None, cover_art: bytes | None = None) -> None:
-        if not self._recording and not self._media_pending_start:
-            self._record_btn.setText("Start Recording")
-            self._set_record_btn_idle()
-            self._record_btn.setEnabled(True)
+        self._reset_btn_if_idle()
         self._log_skip_duplicate(stem, track or stem, cover_art=cover_art)
 
     def _log_skip_duplicate(self, stem: str, display: str, cover_art: bytes | None = None) -> None:
@@ -1249,7 +1245,7 @@ class RecorderApp(QMainWindow):
 
     def _launch_cover_picker(self) -> None:
         self.hide()
-        QTimer.singleShot(150, self._open_region_selector)
+        QTimer.singleShot(_COVER_PICKER_HIDE_DELAY_MS, self._open_region_selector)
 
     def _open_region_selector(self) -> None:
         self._region_selector = RegionSelector(self._on_cover_picked)
@@ -1549,14 +1545,13 @@ class RecorderApp(QMainWindow):
     # Amount of time (ms) a pause must persist before we stop the recording.
     # This prevents brief buffering/transition gaps during track changes from
     # cutting the recording short.
-    _PAUSE_DEBOUNCE_MS = 2500
 
     def _schedule_pause_stop(self) -> None:
         self._cancel_pause_stop()
         self._media_pause_timer = QTimer(self)
         self._media_pause_timer.setSingleShot(True)
         self._media_pause_timer.timeout.connect(self._on_pause_timeout)
-        self._media_pause_timer.start(self._PAUSE_DEBOUNCE_MS)
+        self._media_pause_timer.start(_PAUSE_DEBOUNCE_MS)
 
     def _cancel_pause_stop(self) -> None:
         if self._media_pause_timer is not None:
@@ -1646,7 +1641,7 @@ class RecorderApp(QMainWindow):
             self._log_skip_pattern(display, title, artist, album_title)
             return
 
-        safe_name = _sanitize_filename(display)
+        safe_name = sanitize_filename(display)
         output_folder = self._output_edit.text().strip()
         convert_mp3 = self._convert_mp3_chk.isChecked()
         final_ext = ".mp3" if convert_mp3 else ".wav"
@@ -1675,7 +1670,7 @@ class RecorderApp(QMainWindow):
             self._cover_label.setPixmap(QPixmap())
             self._cover_label.setText("none")
         elif self._cover_region_bbox is not None:
-            QTimer.singleShot(800, self._recapture_cover_art)
+            QTimer.singleShot(_RECAPTURE_COVER_ART_ON_TRACK_CHANGE_DELAY_MS, self._recapture_cover_art)
         self._media_pending_start = True
         self._media_start_recording()
 
@@ -1830,7 +1825,7 @@ class RecorderApp(QMainWindow):
                 bbox = tuple(int(x) for x in v)
                 if len(bbox) == 4:
                     self._cover_region_bbox = bbox  # type: ignore[assignment]
-                    QTimer.singleShot(200, self._recapture_cover_art)
+                    QTimer.singleShot(_RECAPTURE_COVER_ART_ON_LOAD_DELAY_MS, self._recapture_cover_art)
             except (TypeError, ValueError):
                 pass
         if (v := _get("duplicate_mode")) is not None and v in DUPLICATE_MODES:
