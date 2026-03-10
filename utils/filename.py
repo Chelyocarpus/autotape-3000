@@ -19,7 +19,7 @@ DUPLICATE_MODE_LABELS = {
 DEFAULT_DUPLICATE_MODE = DUPLICATE_MODE_APPEND
 
 
-def _sanitize_filename(name: str) -> str:
+def sanitize_filename(name: str) -> str:
     """Strip invalid filesystem characters and trim whitespace."""
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
     return name.strip(" .") or "recording"

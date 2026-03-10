@@ -21,11 +21,11 @@ COLOR_BORDER  = "#363660"   # dark indigo border — visible against all surface
 
 COLOR_WARNING = "#e8a838"   # amber — pending/waiting state
 
-# Derived interactive states (not exported, used only in stylesheet below)
-_ACCENT_HOVER   = "#6960e8"
-_WARNING_HOVER  = "#d4952a"
+# Interactive hover states
+ACCENT_HOVER   = "#6960e8"
+WARNING_HOVER  = "#d4952a"
 _SURFACE_HOVER  = "#22223a"
-_DANGER_HOVER   = "#d94f65"
+DANGER_HOVER   = "#d94f65"
 _COLOR_INPUT    = "#21213a"   # text-input background — a step lighter than surface
 
 APP_STYLESHEET = f"""
@@ -174,8 +174,8 @@ APP_STYLESHEET = f"""
         border-color: {COLOR_ACCENT};
     }}
     QPushButton:checked:hover {{
-        background-color: {_ACCENT_HOVER};
-        border-color: {_ACCENT_HOVER};
+        background-color: {ACCENT_HOVER};
+        border-color: {ACCENT_HOVER};
     }}
     QPushButton#recordBtn {{
         border-radius: 6px;
