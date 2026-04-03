@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AudioRecorder.retrimFile()`** — New static method re-encodes a saved MP3 or trims a WAV in-place to the exact `[startSec, endSec]` range using ffmpeg (MP3 preserves ID3 metadata via `-map_metadata 0`).
 - **`autotape-audio://` Electron protocol** — Registered alongside `autotape-art://` to serve local audio files to the renderer's Web Audio API without needing `webSecurity: false`.
 - **IPC trim handlers** — `trim:apply`, `trim:get-preset`, `trim:get-all-presets`, `trim:save-preset`, `trim:delete-preset` registered in the main process and exposed on `window.electronAPI`.
+- **README screenshots** — Added a light/dark screenshot table at the top of `README.md` (images expected at `docs/screenshots/app-light.png` / `app-dark.png`).
+- **README Audio Trimming section** — New dedicated section in `README.md` documents the waveform trim editor with drag-to-select, per-song presets, global presets, and in-place re-encode behaviour. Includes a screenshot (`docs/screenshots/trim-editor.png`).
 
 ### Changed
 
@@ -24,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **electron-builder config validation** — Fixed build failure caused by unsupported `portable` options in `electron-builder.yml` (`shortcutName`, `uninstallDisplayName`, `createDesktopShortcut`). These keys were removed to match `electron-builder` 26.x schema so Windows builds succeed again.
+- **Trim modal contrast in light theme** — Amber color tokens (`--amber-300` through `--amber-700`) were hardcoded in `@theme inline` and did not swap for the light theme, leaving warm-cream labels (`#e2b59a`) on a parchment modal background (≈1.6:1 — WCAG fail). Tokens are now declared per-theme in `:root` and `[data-theme="light"]` and referenced via CSS variables in `@theme inline`. Light-mode values use dark brown tones (`amber-400: #7c5c4a`, 5.5:1) that meet WCAG AA for all text sizes. The `--z-600` muted-text token in the light theme was also adjusted from `#8a6a56` to `#836050` to achieve a 5.1:1 ratio, clearing AA for 10 px labels.
 
 ## [2.3.1] - 2026-03-25
 

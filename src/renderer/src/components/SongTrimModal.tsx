@@ -90,10 +90,15 @@ function drawWaveform(
       if (abs > peak) peak = abs
     }
     const barH = Math.max(2, peak * (height - 4))
-    const audioFrac = viewStart + (x / width) * viewRange
-    ctx.fillStyle = audioFrac >= startFrac && audioFrac <= endFrac ? clrAmber : clrAmberDim
+    ctx.fillStyle = clrAmber
     ctx.fillRect(x, mid - barH / 2, 1, barH)
   }
+
+  // Wash out the cut regions with a strong overlay so they visually recede
+  const cutOverlay = isDark ? 'rgba(42,27,22,0.60)' : 'rgba(236,218,188,0.72)'
+  ctx.fillStyle = cutOverlay
+  ctx.fillRect(0, 0, sx, height)
+  ctx.fillRect(ex, 0, width - ex, height)
 
   // Handle lines — only draw if in view
   ctx.lineWidth = 2
@@ -579,15 +584,16 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
                 {/* Start handle */}
                 {startInView && (
                   <div
-                    className="trim-handle absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-10 group"
+                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group"
                     data-left={`${startCanvasPct}pct`}
                     style={{ left: `${startCanvasPct}%` }} // eslint-disable-line react/forbid-dom-props
                     onPointerDown={(e) => onPointerDown(e, 'start')}
                   >
-                    <div className="w-3 h-full flex flex-col items-center justify-start pt-1">
-                      <div className="w-2.5 h-2.5 rounded-sm bg-amber-400 group-hover:bg-amber-300 transition-colors shadow-md flex items-center justify-center">
-                        <div className="w-0.5 h-1.5 bg-zinc-950 rounded-full" />
-                      </div>
+                    {/* full-height line */}
+                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-amber-400 group-hover:bg-amber-300 transition-colors opacity-80" />
+                    {/* centred grip knob */}
+                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5">
+                      <div className="w-0.5 h-3 bg-amber-500 rounded-full" />
                     </div>
                   </div>
                 )}
@@ -595,15 +601,16 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
                 {/* End handle */}
                 {endInView && (
                   <div
-                    className="trim-handle absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-10 group"
+                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group"
                     data-left={`${endCanvasPct}pct`}
                     style={{ left: `${endCanvasPct}%` }} // eslint-disable-line react/forbid-dom-props
                     onPointerDown={(e) => onPointerDown(e, 'end')}
                   >
-                    <div className="w-3 h-full flex flex-col items-center justify-start pt-1">
-                      <div className="w-2.5 h-2.5 rounded-sm bg-amber-400 group-hover:bg-amber-300 transition-colors shadow-md flex items-center justify-center">
-                        <div className="w-0.5 h-1.5 bg-zinc-950 rounded-full" />
-                      </div>
+                    {/* full-height line */}
+                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-amber-400 group-hover:bg-amber-300 transition-colors opacity-80" />
+                    {/* centred grip knob */}
+                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5">
+                      <div className="w-0.5 h-3 bg-amber-500 rounded-full" />
                     </div>
                   </div>
                 )}

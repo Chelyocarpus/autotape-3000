@@ -18,6 +18,13 @@
   --tooltip-bg:     #f5d9b8;
   --tooltip-text:   #1e1109;
   --tooltip-border: #e2b59a;
+
+  /* Brand accent scale — dark theme */
+  --amber-300: #ffe1af;
+  --amber-400: #e2b59a;  /* 10.9:1 on z-950 bg — WCAG AAA */
+  --amber-500: #b77466;
+  --amber-600: #a06358;
+  --amber-700: #957c62;  /*  4.6:1 on z-800 canvas bg — WCAG AA */
 }
 
 /* Light theme — warm parchment */
@@ -27,7 +34,7 @@
   --z-900:  #f5e8d8;
   --z-800:  #ecdabc;
   --z-700:  #d9c4a8;
-  --z-600:  #8a6a56;
+  --z-600:  #836050;  /* 5.1:1 on z-950 bg — WCAG AA (inc. 10px text) */
   --z-500:  #6b4e3e;
   --z-400:  #4e3228;
   --z-300:  #b77466;
@@ -38,6 +45,13 @@
   --tooltip-bg:     #3e2820;
   --tooltip-text:   #f5d9b8;
   --tooltip-border: #5c3e35;
+
+  /* Brand accent scale — light theme (dark values for legibility on parchment) */
+  --amber-300: #9c7060;  /* hover feedback — lighter than amber-400 */
+  --amber-400: #7c5c4a;  /* 5.5:1 on z-950 bg, 4.5:1 on z-800 canvas bg — WCAG AA */
+  --amber-500: #6b4840;
+  --amber-600: #5e3c34;
+  --amber-700: #946450;  /* 3.4:1 on z-800 canvas bg — WCAG AA UI component */
 }
 
 @theme inline {
@@ -54,12 +68,12 @@
   --color-zinc-100: var(--z-100);
   --color-zinc-50:  var(--z-50);
 
-  /* Brand accent scale — same in both themes */
-  --color-amber-300: #ffe1af;
-  --color-amber-400: #e2b59a;
-  --color-amber-500: #b77466;
-  --color-amber-600: #a06358;
-  --color-amber-700: #957c62;
+  /* Brand accent scale — theme-aware */
+  --color-amber-300: var(--amber-300);
+  --color-amber-400: var(--amber-400);
+  --color-amber-500: var(--amber-500);
+  --color-amber-600: var(--amber-600);
+  --color-amber-700: var(--amber-700);
 }
 
 @keyframes soundwave {
