@@ -1,5 +1,9 @@
 # Autotape 3000
 
+| Light | Dark |
+|-------|------|
+| ![App — light theme](docs/screenshots/app-light.png) | ![App — dark theme](docs/screenshots/app-dark.png) |
+
 A Windows desktop app that automatically records system audio on a per-track basis. It watches the Windows **Global System Media Transport Controls (GSMTC)** — the same API powering taskbar controls and browser media players — and silently splits recordings every time the track changes. Metadata (artist, title, album, cover art) is pulled directly from GSMTC, so the source app must expose this information for tagging to work.
 
 > [!IMPORTANT]
