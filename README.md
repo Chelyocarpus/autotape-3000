@@ -62,6 +62,19 @@ Autotape 3000 records from a DirectShow audio input device. To isolate music fro
 
 ---
 
+## Audio Trimming
+
+Every recorded track can be trimmed after it has been saved. Open a track from the **Recording Log** to launch the waveform editor.
+
+![Audio trimming editor](docs/screenshots/trim-editor.png)
+
+- **Drag to select** the region you want to keep directly on the waveform
+- **Per-song presets** — save a trim range for a specific track and reuse it on re-encode
+- **Global presets** — apply the same head/tail trim to every track (useful for consistent intros/outros)
+- Re-encodes the file in place; the original is not kept
+
+---
+
 ## Configuration
 
 All settings are in the **Settings** tab:
