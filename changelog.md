@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Zoomable waveform in Trim Modal** — The waveform now supports up to 40× zoom via scroll wheel (centred on the cursor), a draggable zoom slider, and `+` / `−` buttons. A reset-to-full-view button appears when zoomed. Dragging a handle near the left or right edge auto-pans the view, and holding the middle mouse button drags to pan manually.
 - **Relative trim offsets displayed** — The time labels below the waveform now show both absolute timestamps (`0:01.3`) and relative offsets from the file boundaries (`+1.300s from start` / `−0.500s from end`). The "Save as preset" checkbox label also shows the computed offset pair, and the existing-preset badge in the modal header now displays the stored offsets (e.g. `+0.300s / −0.500s`) instead of just "Preset saved", making it immediately clear the preset will work across different-length songs.
 
+### Fixed
+
+- **electron-builder config validation** — Fixed build failure caused by unsupported `portable` options in `electron-builder.yml` (`shortcutName`, `uninstallDisplayName`, `createDesktopShortcut`). These keys were removed to match `electron-builder` 26.x schema so Windows builds succeed again.
+
 ## [2.3.1] - 2026-03-25
 
 ### Added
