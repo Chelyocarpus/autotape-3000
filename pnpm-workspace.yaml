@@ -1,0 +1,5 @@
+allowBuilds:
+  electron: false
+  electron-winstaller: false
+  esbuild: false
+  ffmpeg-static: false

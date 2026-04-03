@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+
+# electron-vite temp config snapshot
+electron.vite.config.*.mjs
+!electron.vite.config.mjs
+
+# Bundled ffmpeg binary (large binary; fetched by @ffmpeg-installer at install time)
+resources/ffmpeg/
+
+# Logs
+*.log
+*.log.*
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.eslintcache
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# electron-builder update config (generated)
+dev-app-update.yml
+/.github

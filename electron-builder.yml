@@ -1,0 +1,34 @@
+appId: com.autotape3000.app
+productName: Autotape 3000
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{tsconfig*.json,.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+asarUnpack:
+  - resources/**
+  - node_modules/@ffmpeg-installer/**
+extraResources:
+  - from: scripts/
+    to: scripts/
+    filter:
+      - '**/*.ps1'
+win:
+  executableName: Autotape3000
+  target:
+    - nsis
+    - portable
+nsis:
+  artifactName: ${name}-setup.${ext}
+portable:
+  artifactName: ${name}-portable.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+npmRebuild: false
+publish:
+  provider: generic
+  url: https://example.com/auto-updates

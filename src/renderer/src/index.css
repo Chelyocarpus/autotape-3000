@@ -1,0 +1,354 @@
+@import "tailwindcss";
+
+/* Dark theme (default) */
+:root {
+  --app-bg: #1a100d;
+  --z-950:  #120b09;
+  --z-900:  #1d1210;
+  --z-800:  #2a1b16;
+  --z-700:  #957c62;  /* 4.7:1 on z-900 card bg — WCAG AA */
+  --z-600:  #a88070;  /* 5.2:1 on z-900 card bg — WCAG AA */
+  --z-500:  #b89080;  /* 6.4:1 on z-900 card bg — WCAG AA */
+  --z-400:  #caa888;  /* 8.3:1 on z-900 card bg — WCAG AAA */
+  --z-300:  #b77466;
+  --z-200:  #e2b59a;
+  --z-100:  #f5d9b8;
+  --z-50:   #ffe1af;
+
+  --tooltip-bg:     #f5d9b8;
+  --tooltip-text:   #1e1109;
+  --tooltip-border: #e2b59a;
+}
+
+/* Light theme — warm parchment */
+[data-theme="light"] {
+  --app-bg: #fdf3ea;
+  --z-950:  #fdf3ea;
+  --z-900:  #f5e8d8;
+  --z-800:  #ecdabc;
+  --z-700:  #d9c4a8;
+  --z-600:  #8a6a56;
+  --z-500:  #6b4e3e;
+  --z-400:  #4e3228;
+  --z-300:  #b77466;
+  --z-200:  #2d1e16;
+  --z-100:  #1e1109;
+  --z-50:   #120b09;
+
+  --tooltip-bg:     #3e2820;
+  --tooltip-text:   #f5d9b8;
+  --tooltip-border: #5c3e35;
+}
+
+@theme inline {
+  /* Surface scale — theme-aware */
+  --color-zinc-950: var(--z-950);
+  --color-zinc-900: var(--z-900);
+  --color-zinc-800: var(--z-800);
+  --color-zinc-700: var(--z-700);
+  --color-zinc-600: var(--z-600);
+  --color-zinc-500: var(--z-500);
+  --color-zinc-400: var(--z-400);
+  --color-zinc-300: var(--z-300);
+  --color-zinc-200: var(--z-200);
+  --color-zinc-100: var(--z-100);
+  --color-zinc-50:  var(--z-50);
+
+  /* Brand accent scale — same in both themes */
+  --color-amber-300: #ffe1af;
+  --color-amber-400: #e2b59a;
+  --color-amber-500: #b77466;
+  --color-amber-600: #a06358;
+  --color-amber-700: #957c62;
+}
+
+@keyframes soundwave {
+  0%, 100% { transform: scaleY(0.35); }
+  50%       { transform: scaleY(1); }
+}
+
+@keyframes record-ring {
+  0%   { box-shadow: 0 0 0 0 #d9826f99; }
+  70%  { box-shadow: 0 0 0 8px #d9826f00; }
+  100% { box-shadow: 0 0 0 0 #d9826f00; }
+}
+
+@keyframes vinyl-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes entry-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes on-air-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.song-trim-modal-card {
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.6);
+}
+
+.trim-handle {
+  transform: translateX(-50%);
+}
+
+.trim-waveform-container {
+  cursor: crosshair;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--app-bg);
+  color: var(--z-100);
+  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--z-700); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--z-600); }
+
+.app-shell {
+  background: var(--app-bg);
+}
+
+.wizard-card {
+  background: var(--z-900);
+  border: 1px solid var(--z-800);
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(183, 116, 102, 0.08);
+}
+
+.tooltip-content {
+  background-color: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: 0 4px 12px #0000001a;
+}
+
+.playing-pill {
+  background-color: #b7746620;
+  color: #7a3c2e;
+  border-color: #b7746650;
+}
+
+[data-theme="dark"] .playing-pill {
+  background-color: #b7746626;
+  color: #e2b59a;
+  border-color: #b7746655;
+}
+
+.soundwave-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 9999px;
+  transform-origin: bottom;
+  animation: soundwave 0.8s ease-in-out infinite;
+}
+.soundwave-bar-1 { animation-delay: 0s; }
+.soundwave-bar-2 { animation-delay: 0.18s; }
+.soundwave-bar-3 { animation-delay: 0.36s; }
+
+/* ─── TRON easter-egg theme ─────────────────────────────────────── */
+@keyframes tron-flicker {
+  0%, 100%  { opacity: 1; }
+  92%       { opacity: 1; }
+  93%       { opacity: 0.84; }
+  94%       { opacity: 1; }
+  97%       { opacity: 0.9; }
+  98%       { opacity: 1; }
+}
+
+@keyframes tron-grid-scroll {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 40px; }
+}
+
+@keyframes tron-scanline {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(200vh); }
+}
+
+@keyframes tron-activate {
+  0%   { opacity: 0; transform: scale(1.04); filter: brightness(2); }
+  30%  { opacity: 1; transform: scale(1); filter: brightness(1.3); }
+  100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes tron-glitch {
+  0%  { clip-path: inset(0 0 100% 0); transform: translate(0); }
+  10% { clip-path: inset(30% 0 50% 0); transform: translate(-3px, 1px); }
+  20% { clip-path: inset(60% 0 10% 0); transform: translate(3px, -1px); }
+  30% { clip-path: inset(10% 0 70% 0); transform: translate(-2px, 2px); }
+  40% { clip-path: inset(80% 0 5%  0); transform: translate(2px, -2px); }
+  50% { clip-path: inset(0  0 0   0); transform: translate(0); }
+  100%{ clip-path: inset(0  0 0   0); transform: translate(0); }
+}
+
+[data-tron="true"] {
+  --app-bg:         #000814;
+  --z-950:          #000610;
+  --z-900:          #000f1e;
+  --z-800:          #001528;
+  --z-700:          #004466;
+  --z-600:          #006080;
+  --z-500:          #009ab5;
+  --z-400:          #00d4ef;
+  --z-300:          #00afd1;
+  --z-200:          #a8ecf8;
+  --z-100:          #d0f6ff;
+  --z-50:           #edfcff;
+
+  --tooltip-bg:     #001528;
+  --tooltip-text:   #00d4ef;
+  --tooltip-border: #004466;
+
+  /* Override amber accent → electric cyan */
+  --color-amber-300: #00e5ff;
+  --color-amber-400: #00d4ef;
+  --color-amber-500: #009ab5;
+  --color-amber-600: #006080;
+  --color-amber-700: #004466;
+
+  animation: tron-flicker 6s linear infinite;
+}
+
+[data-tron="true"] .app-shell {
+  position: relative;
+  background: var(--app-bg);
+}
+
+/* Perspective grid overlay */
+[data-tron="true"] .app-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(0, 200, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 200, 255, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: tron-grid-scroll 4s linear infinite;
+}
+
+/* CRT scanline sweep */
+[data-tron="true"] .app-shell::after {
+  content: '';
+  position: fixed;
+  inset-x: 0;
+  height: 80px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    transparent,
+    rgba(0, 220, 255, 0.04),
+    transparent
+  );
+  animation: tron-scanline 4s linear infinite;
+}
+
+/* Neon border on cards */
+[data-tron="true"] [class*="border"] {
+  border-color: rgba(0, 180, 220, 0.3) !important;
+}
+
+/* Neon glow on scrollbar thumb */
+[data-tron="true"] ::-webkit-scrollbar-thumb {
+  background: #00afd1;
+  box-shadow: 0 0 6px #00d4ef;
+}
+
+/* Sound-wave bars → cyan (bg-amber-400 is inlined at build time, override explicitly) */
+[data-tron="true"] .soundwave-bar {
+  background-color: #00d4ef !important;
+  box-shadow: 0 0 6px #00e5ff;
+}
+
+/* Check-mark icons and any amber text → cyan (text-amber-400 is inlined, override explicitly) */
+[data-tron="true"] .text-amber-400,
+[data-tron="true"] .text-amber-500 {
+  color: #00d4ef !important;
+  filter: drop-shadow(0 0 4px #00d4ef88);
+}
+
+/* Amber backgrounds → cyan (bg-amber-400 etc. are inlined) */
+[data-tron="true"] .bg-amber-400,
+[data-tron="true"] .bg-amber-500 {
+  background-color: #00d4ef !important;
+}
+
+/* Playing pill → Tron variant */
+[data-tron="true"] .playing-pill {
+  background-color: rgba(0, 180, 220, 0.15);
+  color: #00d4ef;
+  border-color: rgba(0, 180, 220, 0.4);
+  box-shadow: 0 0 8px rgba(0, 212, 239, 0.25);
+}
+
+/* Tron activation overlay */
+.tron-overlay {
+  animation: tron-activate 0.5s ease forwards;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 50%, rgba(0, 220, 255, 0.12) 0%, transparent 70%);
+}
+
+.tron-banner-text {
+  font-family: 'Courier New', 'Lucida Console', monospace;
+  letter-spacing: 0.35em;
+}
+
+.tron-glitch {
+  animation: tron-glitch 0.5s ease forwards;
+}
+
+.tron-banner-box {
+  border: 1px solid #00d4ef;
+  padding: 0.75rem 2.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 0 24px rgba(0, 212, 239, 0.33), inset 0 0 24px rgba(0, 212, 239, 0.094);
+}
+
+.tron-banner-box.inactive {
+  opacity: 0.5;
+}
+
+.tron-banner-title {
+  font-family: 'Courier New', 'Lucida Console', monospace;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: #00d4ef;
+  text-shadow: 0 0 14px #00e5ff, 0 0 30px rgba(0, 212, 239, 0.533);
+}
+
+.tron-banner-sub {
+  font-family: 'Courier New', 'Lucida Console', monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #009ab5;
+  text-align: center;
+  text-shadow: 0 0 8px #00d4ef;
+}
