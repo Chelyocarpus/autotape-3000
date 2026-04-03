@@ -4,7 +4,7 @@
   "description": "Record system audio per-track using GSMTC",
   "main": "./out/main/index.js",
   "author": "autotape3000",
-  "homepage": "https://github.com/jwallet/spy-spotify",
+  "homepage": "https://github.com/Chelyocarpus/autotape-3000",
   "scripts": {
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
