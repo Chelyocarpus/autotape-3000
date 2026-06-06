@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Sun, Moon, Minus, Square, X, Library, SlidersHorizontal } from 'lucide-react'
+import { Sun, Moon, Minus, Square, X, Library, SlidersHorizontal, AlertTriangle } from 'lucide-react'
 import { NowPlaying } from './components/NowPlaying'
 import { RecordButton } from './components/RecordButton'
 import { RecordingLog } from './components/RecordingLog'
@@ -95,7 +95,26 @@ export function App() {
 
   const [trimEntry, setTrimEntry] = useState<RecordingEntry | null>(null)
 
-  const { isRecording, currentTrack, elapsed, start, stop } = useRecording(onEntry)
+  const { isRecording, currentTrack, elapsed, silenceWarning, start, stop } = useRecording(onEntry)
+
+  // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
+  const [silenceDismissed, setSilenceDismissed] = useState(false)
+  const silenceDismissRef = useRef<HTMLButtonElement>(null)
+
+  // Auto-focus the dismiss button when the dialog opens so keyboard users can
+  // press Enter to dismiss immediately.
+  useEffect(() => {
+    if (showSilenceDialog && silenceDismissRef.current) {
+      silenceDismissRef.current.focus()
+    }
+  }, [showSilenceDialog])
+  // Re-arm when silence warning changes (new warning after dismissal should show again)
+  const prevSilenceWarning = useRef(false)
+  useEffect(() => {
+    if (silenceWarning && !prevSilenceWarning.current) setSilenceDismissed(false)
+    prevSilenceWarning.current = silenceWarning
+  }, [silenceWarning])
+  const showSilenceDialog = isRecording && silenceWarning && !silenceDismissed
 
   const [isMaximized, setIsMaximized] = useState(false)
 
@@ -209,25 +228,25 @@ export function App() {
         </Card>
 
         {/* Right panel: full-height Recordings + Settings */}
-        <Card className="flex-1 min-h-0 flex flex-col">
-          <CardContent className="pt-4 flex-1 flex flex-col min-h-0">
+        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <CardContent className="p-0 pt-0 flex-1 flex flex-col min-h-0 overflow-hidden">
             <Tabs defaultValue="recordings" className="flex flex-col flex-1 min-h-0">
-              <TabsList className="w-full justify-start shrink-0">
-                <TabsTrigger value="recordings" className="flex items-center gap-1.5">
-                  <Library className="w-3.5 h-3.5" />
+              <TabsList className="w-full shrink-0 px-4">
+                <TabsTrigger value="recordings">
+                  <Library className="w-3 h-3" />
                   Recordings
                 </TabsTrigger>
-                <TabsTrigger value="settings" className="flex items-center gap-1.5">
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                <TabsTrigger value="settings">
+                  <SlidersHorizontal className="w-3 h-3" />
                   Settings
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="recordings" className="flex-1 min-h-0 mt-3">
+              <TabsContent value="recordings" className="flex-1 min-h-0 pt-1.5">
                 <RecordingLog entries={entries} onTrimEntry={setTrimEntry} />
               </TabsContent>
 
-              <TabsContent value="settings" className="flex-1 overflow-y-auto mt-3">
+              <TabsContent value="settings" className="flex-1 overflow-y-auto pt-1.5 px-4 pb-4">
                 <SettingsPanel onOpenWizard={() => setShowOnboarding(true)} />
               </TabsContent>
             </Tabs>
@@ -247,6 +266,50 @@ export function App() {
             setTrimEntry(null)
           }}
         />
+      )}
+
+      {showSilenceDialog && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="silence-dialog-title"
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setSilenceDismissed(true)
+          }}
+        >
+          {/* Backdrop — click to dismiss */}
+          <div
+            className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm"
+            onClick={() => setSilenceDismissed(true)}
+          />
+
+          {/* Dialog card */}
+          <div className="relative z-10 w-80 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl p-6 flex flex-col gap-4 animate-[on-air-in_0.18s_ease_forwards]">
+            {/* Icon + title */}
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 ring-1 ring-amber-500/30">
+                <AlertTriangle className="h-5 w-5 text-amber-400" />
+              </span>
+              <div>
+                <p id="silence-dialog-title" className="text-sm font-semibold text-zinc-100">No audio detected</p>
+                <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
+                  Autotape is recording but picking up silence. Check that your audio device in Settings matches where your music is playing.
+                </p>
+              </div>
+            </div>
+
+            {/* Dismiss */}
+            <button
+              ref={silenceDismissRef}
+              className="self-end text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 rounded"
+              onClick={() => setSilenceDismissed(true)}
+              aria-label="Dismiss warning"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
 
       {tronOverlay && (

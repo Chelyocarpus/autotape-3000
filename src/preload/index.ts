@@ -40,6 +40,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.off('recorder:finished', handler)
   },
 
+  onSilenceWarning: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('recorder:silence-warning', handler)
+    return () => ipcRenderer.off('recorder:silence-warning', handler)
+  },
+
+  onAudioDetected: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('recorder:audio-detected', handler)
+    return () => ipcRenderer.off('recorder:audio-detected', handler)
+  },
+
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (s: unknown) => ipcRenderer.invoke('settings:save', s),
