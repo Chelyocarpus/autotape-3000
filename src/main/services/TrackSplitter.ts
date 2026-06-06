@@ -36,6 +36,8 @@ export declare interface TrackSplitter {
   on(event: 'recordingFinished', listener: (entry: RecordingEntry) => void): this
   on(event: 'recordingTrackUpdated', listener: (track: GsmtcTrack) => void): this
   on(event: 'error', listener: (err: Error) => void): this
+  on(event: 'silenceWarning', listener: () => void): this
+  on(event: 'audioDetected', listener: () => void): this
 }
 
 export class TrackSplitter extends EventEmitter {
@@ -63,7 +65,14 @@ export class TrackSplitter extends EventEmitter {
 
   constructor(private readonly _gsmtc: GsmtcService) {
     super()
-    this._recorder.on('error', (err) => this.emit('error', err))
+    this._wireRecorderToSplitter(this._recorder)
+  }
+
+  /** Wire active-recorder events (error, silence) to this splitter. */
+  private _wireRecorderToSplitter(r: AudioRecorder): void {
+    r.on('error', (err) => this.emit('error', err))
+    r.on('silence-warning', () => this.emit('silenceWarning'))
+    r.on('audio-detected', () => this.emit('audioDetected'))
   }
 
   /**
@@ -180,7 +189,7 @@ export class TrackSplitter extends EventEmitter {
         // so we keep any new-song audio already buffered in the warm file.
         const positionSec = (newTrack.positionMs ?? 0) / 1000
         this._recorder = warm
-        this._recorder.on('error', (err) => this.emit('error', err))
+        this._wireRecorderToSplitter(this._recorder)
         this._recordingStartedAt = warmStartedAt
         this._trimSec = Math.max(0, (Date.now() - warmStartedAt) / 1000 - positionSec - TrackSplitter.WARM_PAD_SEC)
         this._pendingMetadataUpdate = true
@@ -199,7 +208,7 @@ export class TrackSplitter extends EventEmitter {
         const trimSec = Math.max(0, (Date.now() - warmStartedAt) / 1000 - positionSec - TrackSplitter.WARM_PAD_SEC)
         log(`[Splitter] warm recorder promoted for "${newTrack.title}" (pre-roll=${(trimSec * 1000).toFixed(0)}ms, position=${(positionSec * 1000).toFixed(0)}ms)`)
         this._recorder = warm
-        this._recorder.on('error', (err) => this.emit('error', err))
+        this._wireRecorderToSplitter(this._recorder)
         this._recordingStartedAt = warmStartedAt
         this._trimSec = trimSec
         this._currentTrack = newTrack
@@ -378,11 +387,11 @@ export class TrackSplitter extends EventEmitter {
     }
   }
 
-  /** Create a fresh AudioRecorder (with error listener), returning the old instance. */
+  /** Create a fresh AudioRecorder (with error + silence listeners), returning the old instance. */
   private _swapRecorder(): AudioRecorder {
     const old = this._recorder
     this._recorder = new AudioRecorder()
-    this._recorder.on('error', (err) => this.emit('error', err))
+    this._wireRecorderToSplitter(this._recorder)
     return old
   }
 

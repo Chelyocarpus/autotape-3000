@@ -1,5 +1,6 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen } from 'electron'
 import { join } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { GsmtcService } from './services/GsmtcService'
@@ -21,8 +22,108 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+let _flushWindowState: (() => void) | null = null
 const gsmtcService = new GsmtcService()
 const trackSplitter = new TrackSplitter(gsmtcService)
+
+// ─── Window state persistence ──────────────────────────────────────────────
+
+interface WindowState {
+  x?: number
+  y?: number
+  width: number
+  height: number
+  isMaximized: boolean
+}
+
+const DEFAULT_WINDOW_STATE: WindowState = {
+  width: 860,
+  height: 560,
+  isMaximized: false
+}
+
+function windowStatePath(): string {
+  const dir = app.getPath('userData')
+  mkdirSync(dir, { recursive: true })
+  return join(dir, 'window-state.json')
+}
+
+function loadWindowState(): WindowState {
+  const p = windowStatePath()
+  if (!existsSync(p)) return { ...DEFAULT_WINDOW_STATE }
+  try {
+    const raw = readFileSync(p, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<WindowState>
+    return { ...DEFAULT_WINDOW_STATE, ...parsed }
+  } catch {
+    return { ...DEFAULT_WINDOW_STATE }
+  }
+}
+
+function saveWindowState(state: WindowState): void {
+  writeFileSync(windowStatePath(), JSON.stringify(state, null, 2), 'utf-8')
+}
+
+/**
+ * Check whether a rectangle is at least partially visible on any connected display.
+ * Prevents the window from opening off-screen when a monitor is disconnected.
+ */
+function boundsAreVisible(x: number, y: number, width: number, height: number): boolean {
+  // Require at least a 100×100 px sliver to be visible
+  const MIN_VISIBLE = 100
+  return screen.getAllDisplays().some((display) => {
+    const { x: dx, y: dy, width: dw, height: dh } = display.bounds
+    const overlapX = Math.max(0, Math.min(x + width, dx + dw) - Math.max(x, dx))
+    const overlapY = Math.max(0, Math.min(y + height, dy + dh) - Math.max(y, dy))
+    return overlapX >= MIN_VISIBLE && overlapY >= MIN_VISIBLE
+  })
+}
+
+/**
+ * Wire up window move/resize/maximize listeners with debounced persistence.
+ * Returns a cleanup function that flushes the final state synchronously
+ * (call on app quit while the window still exists).
+ */
+function trackWindowState(win: BrowserWindow): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const persist = (): void => {
+    if (!win || win.isDestroyed()) return
+    const isMaximized = win.isMaximized()
+    // When maximized, save the normal (unmaximized) bounds so we can restore
+    // that size on next launch even if the user quits while maximized.
+    const bounds = isMaximized ? win.getNormalBounds() : win.getBounds()
+    saveWindowState({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      isMaximized
+    })
+  }
+
+  // Debounced persist — fires 300ms after the last resize/move event stops
+  const debouncedPersist = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(persist, 300)
+  }
+
+  win.on('resize', debouncedPersist)
+  win.on('move', debouncedPersist)
+
+  // Maximize/unmaximize: persist immediately so the flag is always in sync
+  win.on('maximize', () => persist())
+  win.on('unmaximize', () => persist())
+
+  // Return a cleanup that does a final synchronous save
+  return () => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    persist()
+  }
+}
 
 function registerArtProtocol(): void {
   protocol.handle('autotape-art', async (request) => {
@@ -59,9 +160,18 @@ function registerArtProtocol(): void {
 }
 
 function createWindow(): void {
+  const savedState = loadWindowState()
+
+  // Only restore position if the saved bounds are still visible on a display
+  const hasValidPosition =
+    savedState.x !== undefined &&
+    savedState.y !== undefined &&
+    boundsAreVisible(savedState.x, savedState.y, savedState.width, savedState.height)
+
   mainWindow = new BrowserWindow({
-    width: 860,
-    height: 560,
+    ...(hasValidPosition ? { x: savedState.x, y: savedState.y } : {}),
+    width: savedState.width,
+    height: savedState.height,
     minWidth: 720,
     minHeight: 480,
     show: false,
@@ -77,12 +187,20 @@ function createWindow(): void {
     }
   })
 
+  // Restore maximized state after the window is ready (avoids visual flicker)
+  if (savedState.isMaximized) {
+    mainWindow.once('ready-to-show', () => {
+      mainWindow?.maximize()
+    })
+  }
+
   mainWindow.on('ready-to-show', () => {
     mainWindow!.show()
   })
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    _flushWindowState = null
   })
 
   mainWindow.on('maximize', () => {
@@ -138,6 +256,14 @@ function wireSplitter(): void {
 
   trackSplitter.on('error', (err) => {
     console.error('[Splitter]', err.message)
+  })
+
+  trackSplitter.on('silenceWarning', () => {
+    mainWindow?.webContents.send('recorder:silence-warning')
+  })
+
+  trackSplitter.on('audioDetected', () => {
+    mainWindow?.webContents.send('recorder:audio-detected')
   })
 }
 
@@ -272,6 +398,7 @@ app.whenReady().then(() => {
   wireGsmtc()
   wireSplitter()
   createWindow()
+  _flushWindowState = trackWindowState(mainWindow!)
 
   // Pre-warm ffmpeg capability detection asynchronously to avoid blocking
   // the event loop (and freezing the UI) when the user first presses Record.
@@ -281,12 +408,16 @@ app.whenReady().then(() => {
   gsmtcService.start(100)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+      _flushWindowState = trackWindowState(mainWindow!)
+    }
   })
 })
 
 app.on('window-all-closed', async () => {
   await trackSplitter.stopListening()
   gsmtcService.stop()
+  if (_flushWindowState) _flushWindowState()
   if (process.platform !== 'darwin') app.quit()
 })

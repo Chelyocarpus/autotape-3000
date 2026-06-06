@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README screenshots** — Added a light/dark screenshot table at the top of `README.md` (images expected at `docs/screenshots/app-light.png` / `app-dark.png`).
 - **README Audio Trimming section** — New dedicated section in `README.md` documents the waveform trim editor with drag-to-select, per-song presets, global presets, and in-place re-encode behaviour. Includes a screenshot (`docs/screenshots/trim-editor.png`).
 
+### Changed (UI)
+
+- **Recordings/Settings panel redesign** — Replaced the pill-style tab widget with a clean underline navigation bar (borderless separator line, active tab highlighted with an amber bottom indicator). The right panel card now has zero top padding so the tab navigation sits flush at the card edge. Recording list rows gained a left amber accent bar on hover, a subtle `ring-1` on album art thumbnails, and tighter typography (`13px` title / `11px` artist with `leading-snug`). Duration stamps use `tabular-nums` mono for stable column alignment. The empty state was redesigned with a framed icon container and smaller, more precise copy.
+
 ### Changed
 
 - **Zoomable waveform in Trim Modal** — The waveform now supports up to 40× zoom via scroll wheel (centred on the cursor), a draggable zoom slider, and `+` / `−` buttons. A reset-to-full-view button appears when zoomed. Dragging a handle near the left or right edge auto-pans the view, and holding the middle mouse button drags to pan manually.

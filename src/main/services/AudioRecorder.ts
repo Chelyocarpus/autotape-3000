@@ -19,6 +19,8 @@ export declare interface AudioRecorder {
   on(event: 'started', listener: () => void): this
   on(event: 'stopped', listener: (filePath: string) => void): this
   on(event: 'error', listener: (err: Error) => void): this
+  on(event: 'silence-warning', listener: () => void): this
+  on(event: 'audio-detected', listener: () => void): this
 }
 
 export class AudioRecorder extends EventEmitter {
@@ -91,8 +93,20 @@ export class AudioRecorder extends EventEmitter {
     this._proc = spawn(binary, args, { windowsHide: true })
     this._running = true
 
-    this._proc.stderr?.on('data', (_chunk: Buffer) => {
-      // ffmpeg writes progress to stderr; we ignore it
+    let stderrBuf = ''
+    this._proc.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuf += chunk.toString()
+      // Process complete lines to detect silence events from the silencedetect filter
+      let nl: number
+      while ((nl = stderrBuf.indexOf('\n')) !== -1) {
+        const line = stderrBuf.slice(0, nl)
+        stderrBuf = stderrBuf.slice(nl + 1)
+        if (line.includes('silence_start')) {
+          this.emit('silence-warning')
+        } else if (line.includes('silence_end')) {
+          this.emit('audio-detected')
+        }
+      }
     })
 
     this._proc.on('error', (err) => {
@@ -131,6 +145,7 @@ export class AudioRecorder extends EventEmitter {
       '-thread_queue_size', '512',
       '-i', input,
       '-vn', '-ar', '44100', '-ac', '2',
+      '-af', 'silencedetect=noise=-60dB:d=5',
       '-fflags', '+nobuffer',
       '-flush_packets', '1',
       outputPath

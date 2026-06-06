@@ -17,6 +17,8 @@ declare global {
       stopRecording: () => Promise<void>
       onRecordingStarted: (cb: (track: GsmtcTrack) => void) => () => void
       onRecordingFinished: (cb: (entry: RecordingEntry) => void) => () => void
+      onSilenceWarning: (cb: () => void) => () => void
+      onAudioDetected: (cb: () => void) => () => void
 
       // Settings
       getSettings: () => Promise<UserSettings>
@@ -90,11 +92,13 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
   const [isRecording, setIsRecording] = useState(false)
   const [currentTrack, setCurrentTrack] = useState<GsmtcTrack | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [silenceWarning, setSilenceWarning] = useState(false)
   const startTimeRef = useRef<number>(0)
 
   const start = useCallback(async () => {
     await window.electronAPI.startRecording()
     setIsRecording(true)
+    setSilenceWarning(false)
     startTimeRef.current = Date.now()
     setElapsed(0)
   }, [])
@@ -104,20 +108,26 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
     setIsRecording(false)
     setCurrentTrack(null)
     setElapsed(0)
+    setSilenceWarning(false)
   }, [])
 
   useEffect(() => {
     const unsubStarted = window.electronAPI.onRecordingStarted((track) => {
       setCurrentTrack(track)
+      setSilenceWarning(false)
       startTimeRef.current = Date.now()
       setElapsed(0)
     })
     const unsubFinished = window.electronAPI.onRecordingFinished((entry) => {
       onEntry(entry)
     })
+    const unsubSilence = window.electronAPI.onSilenceWarning(() => setSilenceWarning(true))
+    const unsubAudio = window.electronAPI.onAudioDetected(() => setSilenceWarning(false))
     return () => {
       unsubStarted()
       unsubFinished()
+      unsubSilence()
+      unsubAudio()
     }
   }, [onEntry])
 
@@ -128,7 +138,7 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
     return () => clearInterval(id)
   }, [isRecording])
 
-  return { isRecording, currentTrack, elapsed, start, stop }
+  return { isRecording, currentTrack, elapsed, silenceWarning, start, stop }
 }
 
 /** Load and save settings */
