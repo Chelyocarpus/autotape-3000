@@ -199,8 +199,12 @@ function createWindow(): void {
   })
 
   mainWindow.on('closed', () => {
+    // Flush final window state before the window object is destroyed
+    if (_flushWindowState) {
+      _flushWindowState()
+      _flushWindowState = null
+    }
     mainWindow = null
-    _flushWindowState = null
   })
 
   mainWindow.on('maximize', () => {
@@ -418,6 +422,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', async () => {
   await trackSplitter.stopListening()
   gsmtcService.stop()
-  if (_flushWindowState) _flushWindowState()
+  // Window state is already flushed in mainWindow.on('closed') above
   if (process.platform !== 'darwin') app.quit()
 })

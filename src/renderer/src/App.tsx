@@ -99,6 +99,15 @@ export function App() {
 
   // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
   const [silenceDismissed, setSilenceDismissed] = useState(false)
+  const silenceDismissRef = useRef<HTMLButtonElement>(null)
+
+  // Auto-focus the dismiss button when the dialog opens so keyboard users can
+  // press Enter to dismiss immediately.
+  useEffect(() => {
+    if (showSilenceDialog && silenceDismissRef.current) {
+      silenceDismissRef.current.focus()
+    }
+  }, [showSilenceDialog])
   // Re-arm when silence warning changes (new warning after dismissal should show again)
   const prevSilenceWarning = useRef(false)
   useEffect(() => {
@@ -265,9 +274,15 @@ export function App() {
           aria-modal="true"
           aria-labelledby="silence-dialog-title"
           className="fixed inset-0 z-50 flex items-center justify-center"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setSilenceDismissed(true)
+          }}
         >
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm" />
+          {/* Backdrop — click to dismiss */}
+          <div
+            className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm"
+            onClick={() => setSilenceDismissed(true)}
+          />
 
           {/* Dialog card */}
           <div className="relative z-10 w-80 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl p-6 flex flex-col gap-4 animate-[on-air-in_0.18s_ease_forwards]">
@@ -286,7 +301,8 @@ export function App() {
 
             {/* Dismiss */}
             <button
-              className="self-end text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors"
+              ref={silenceDismissRef}
+              className="self-end text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 rounded"
               onClick={() => setSilenceDismissed(true)}
               aria-label="Dismiss warning"
             >
