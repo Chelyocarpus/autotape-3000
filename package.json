@@ -12,7 +12,9 @@
     "postinstall": "electron-builder install-app-deps",
     "build:win": "npm run build && electron-builder --win",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
-    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false"
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -39,6 +41,9 @@
     "@phosphor-icons/core": "^2.1.1",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.1.8",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.15.29",
     "@types/react": "^19.1.5",
     "@types/react-dom": "^19.1.5",
@@ -47,10 +52,12 @@
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
+    "jsdom": "^29.1.1",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3",
-    "vite": "^7.2.6"
+    "vite": "^7.2.6",
+    "vitest": "^4.1.9"
   }
 }

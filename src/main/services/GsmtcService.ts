@@ -35,7 +35,8 @@ const EMPTY_TRACK: GsmtcTrack = {
   isPlaying: false
 }
 
-function tracksEqual(a: GsmtcTrack, b: GsmtcTrack): boolean {
+/** Exported for unit testing — pure identity comparison, no I/O. */
+export function tracksEqual(a: GsmtcTrack, b: GsmtcTrack): boolean {
   return (
     a.artist === b.artist &&
     a.title === b.title &&
@@ -44,7 +45,8 @@ function tracksEqual(a: GsmtcTrack, b: GsmtcTrack): boolean {
   )
 }
 
-function isLikelyNextTrack(prev: GsmtcTrack, next: GsmtcTrack): boolean {
+/** Exported for unit testing — pure heuristic, no I/O. */
+export function isLikelyNextTrack(prev: GsmtcTrack, next: GsmtcTrack): boolean {
   const prevPos = prev.positionMs ?? 0
   const nextPos = next.positionMs ?? 0
   const sameSource = (prev.sourceAppId ?? '') === (next.sourceAppId ?? '')
