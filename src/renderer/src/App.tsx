@@ -100,6 +100,7 @@ export function App() {
   // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
   const [silenceDismissed, setSilenceDismissed] = useState(false)
   const silenceDismissRef = useRef<HTMLButtonElement>(null)
+  const showSilenceDialog = isRecording && silenceWarning && !silenceDismissed
 
   // Auto-focus the dismiss button when the dialog opens so keyboard users can
   // press Enter to dismiss immediately.
@@ -114,7 +115,6 @@ export function App() {
     if (silenceWarning && !prevSilenceWarning.current) setSilenceDismissed(false)
     prevSilenceWarning.current = silenceWarning
   }, [silenceWarning])
-  const showSilenceDialog = isRecording && silenceWarning && !silenceDismissed
 
   const [isMaximized, setIsMaximized] = useState(false)
 
