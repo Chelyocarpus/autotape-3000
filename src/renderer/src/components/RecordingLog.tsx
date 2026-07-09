@@ -17,7 +17,7 @@ function formatDuration(sec: number): string {
 
 function StatusIcon({ status }: { status: RecordingEntry['status'] }) {
   if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-  if (status === 'error') return <XCircle className="w-4 h-4 text-(--rec-500) shrink-0" />
+  if (status === 'error') return <XCircle className="w-4 h-4 text-[var(--rec-500)] shrink-0" />
   return <SkipForward className="w-4 h-4 text-zinc-500 shrink-0" />
 }
 
@@ -110,7 +110,7 @@ export function RecordingLog({ entries, onTrimEntry }: RecordingLogProps) {
               {entry.status === 'error' && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="text-[11px] text-(--rec-500) truncate max-w-20 cursor-default">error</span>
+                    <span className="text-[11px] text-[var(--rec-500)] truncate max-w-20 cursor-default">error</span>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="select-text">{entry.error}</TooltipContent>
                 </Tooltip>

@@ -157,8 +157,8 @@ export function RecordButton({
             'group relative w-28 h-28 rounded-full cursor-pointer',
             'transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900',
             isRecording
-              ? 'focus-visible:ring-(--rec-500) animate-[record-ring_1.8s_ease_infinite]'
-              : 'focus-visible:ring-(--color-amber-500) hover:scale-[1.08] hover:shadow-[0_0_40px_color-mix(in_srgb,var(--color-amber-500)_50%,transparent)] active:scale-[1.02]'
+              ? 'focus-visible:ring-[var(--rec-500)] animate-[record-ring_1.8s_ease_infinite]'
+              : 'focus-visible:ring-[var(--color-amber-500)] hover:scale-[1.08] hover:shadow-[0_0_40px_color-mix(in_srgb,var(--color-amber-500)_50%,transparent)] active:scale-[1.02]'
           )}
           onClick={isRecording ? onStop : onStart}
           aria-label={isRecording ? 'Stop recording' : 'Start recording'}
@@ -181,8 +181,8 @@ export function RecordButton({
             <p className="text-2xl font-mono font-light text-zinc-100 tabular-nums tracking-wider">
               {formatElapsed(elapsed)}
             </p>
-            <p className="text-[11px] text-(--rec-500)/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
-              <span className="w-1.5 h-1.5 rounded-full bg-(--rec-500) animate-pulse inline-block" />
+            <p className="text-[11px] text-[var(--rec-500)]/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--rec-500)] animate-pulse inline-block" />
               {RECORDING_STATUSES[statusIndex]}
             </p>
           </>

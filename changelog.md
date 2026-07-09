@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-07-10
+
+### Added
+
+- **`AudioRecorder` unit tests** — New `src/main/services/__tests__/AudioRecorder.test.ts` covers the two behaviors from 2.4.1 that had no direct test coverage: the ffmpeg capture args no longer forcing a 44.1kHz sample rate, and `retrimFile` re-encoding MP3s in ABR mode at the source file's probed bitrate (with a 192kbps fallback when probing finds nothing usable), while WAV re-trims skip probing entirely and stream-copy instead.
+
+### Fixed
+
+- **Tailwind arbitrary-value syntax for the recording/error accent** — `ring-(--rec-500)`, `text-(--rec-500)`, and `bg-(--rec-500)` in `RecordButton.tsx`/`RecordingLog.tsx` used Tailwind v4's CSS-variable shorthand syntax; switched to the more broadly-recognized `ring-[var(--rec-500)]`/`text-[var(--rec-500)]`/`bg-[var(--rec-500)]` bracket form for compatibility with tooling that doesn't parse the shorthand. Verified both forms compile to identical output CSS, so this is a no-op at runtime.
+
+### Removed
+
+- **Committed TypeScript build cache** — `tsconfig.node.tsbuildinfo` (a machine-specific incremental-build artifact) was tracked in git; removed it from tracking and added `*.tsbuildinfo` to `.gitignore`.
+
 ## [2.4.1] - 2026-07-07
 
 ### Added
