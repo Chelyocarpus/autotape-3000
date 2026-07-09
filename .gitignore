@@ -23,6 +23,9 @@ pnpm-debug.log*
 Thumbs.db
 .eslintcache
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Local env files
 .env
 .env.*
