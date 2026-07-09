@@ -15,7 +15,8 @@ extraResources:
   - from: scripts/
     to: scripts/
     filter:
-      - '**/*.ps1'
+      - 'gsmtc.ps1'
+      - 'gsmtc_loop.ps1'
 win:
   executableName: Autotape3000
   target:

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-07-07
+
+### Added
+
+- **`TrackSplitter` unit tests** — New `src/main/services/__tests__/TrackSplitter.test.ts` covers the splitter's state machine with faked `AudioRecorder`/`GsmtcService`/filesystem collaborators and a controlled clock: warm-recorder pre-roll trim math and precise duration calculation across a track change, dropping short recordings on track change, duplicate detection both before a recording starts and after a sentinel recording's metadata resolves, in-place metadata updates that don't restart an in-progress recording, and graceful-vs-fast stop selection.
+- **Hover tooltip explaining why a recording was skipped** — The Recording Log's "skipped" status label is now wrapped in the same hover tooltip the "error" label already had. `TrackSplitter` previously left `error` unset on the two duplicate-detected-before-recording paths and the duplicate-detected-at-finalize path, so those rows gave no indication of why they were skipped; all three now set a `"A file with this name already exists (duplicate action: skip)"` reason, alongside the existing short-recording-drop reason.
+
+### Fixed
+
+- **Recording no longer force-resamples to 44.1kHz** — `AudioRecorder`'s ffmpeg capture args dropped the hardcoded `-ar 44100` output option. Previously every recording was resampled from whatever rate the DirectShow device negotiated (commonly 48kHz on Windows) down to 44.1kHz via swresample, even for WAV output — so "WAV (lossless)" wasn't actually bit-faithful to the source. Both WAV and the MP3/LAME encoder handle 48kHz natively, so the capture now preserves the device's native sample rate.
+- **MP3 encoding uses ABR instead of CBR** — `AudioRecorder.encodeToMp3` now passes `-abr 1` alongside `-b:a` so LAME targets the selected bitrate in average-bitrate (VBR-style) mode instead of strict constant bitrate. This gives better quality per file size at the same nominal bitrate while keeping the existing bitrate selector (128–320 kbps) meaningful.
+- **Re-trim now preserves the original bitrate** — `AudioRecorder.retrimFile` previously re-encoded MP3s at a hardcoded `-q:a 0` (~245kbps VBR) regardless of the file's original bitrate, so trimming a 128kbps recording would balloon it to ~245kbps. It now probes the source file's nominal bitrate via ffmpeg's stream info and re-encodes at that same bitrate (ABR), falling back to 192kbps only if probing fails.
+- **Debug-only PowerShell scripts no longer ship in production builds** — `electron-builder.yml`'s `extraResources` filter bundled every `scripts/**/*.ps1` file, pulling the dev-only `gsmtc_probe.ps1` and `debug_art.ps1` diagnostic tools into the packaged app. The filter now lists only `gsmtc.ps1` and `gsmtc_loop.ps1`, the two scripts `GsmtcService` actually invokes at runtime.
+- **Recording/error coral now repaints correctly in Tron mode, and meets contrast in light mode** — The "recording" coral (`#d9826f`) and related accents were hardcoded as Tailwind arbitrary hex values in `RecordButton.tsx` and `RecordingLog.tsx` instead of living in `index.css` alongside the amber scale.
+- **Pinned the package manager to pnpm** — Added `"packageManager": "pnpm@10.32.1"` to `package.json` and switched `build:win` to call `pnpm run build`. `.npmrc`'s `shamefully-hoist` is a pnpm-only setting; running scripts with plain `npm` (as `build:win` did internally) triggered a `npm warn Unknown project config "shamefully-hoist"` on every invocation. Use `pnpm`, not `npm`, for scripts in this repo.
+- **Copyable text in read-only path/error fields** — The app-wide `user-select: none` in `index.css` (for the native-app feel) also blocked selecting the Output Folder and ffmpeg-path inputs, the "Auto-detected: …" hint, and the Recording Log's error-tooltip text — exactly the strings a user would want to copy into a search or bug report. Added `select-text` to those specific fields in `SettingsPanel.tsx`, `OnboardingWizard.tsx`, and `RecordingLog.tsx` so they remain selectable while the rest of the UI stays non-selectable.
+
+### Removed
+
+- **Dead `compact` variant of `RecordButton`** — Removed the unused `compact` prop and its ~35-line alternate rendering branch. It defaulted to `false` and no caller ever passed `true`, so it was a second design to maintain with no current purpose.
+
+### Security
+
+- **Renderer runs sandboxed** — `sandbox: false` in the `BrowserWindow`'s `webPreferences` is now `sandbox: true`. The preload script only uses `contextBridge`/`ipcRenderer` (no other Node built-ins), which Electron's sandboxed preload context fully supports, so this is a defense-in-depth tightening with no functional change: the renderer already had no `nodeIntegration` and all main-process access already went through the `contextBridge` API surface.
+- Bump electron & vite; add pnpm overrides
+
 ## [2.4.0] - 2026-04-03
 
 ### Added

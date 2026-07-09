@@ -44,6 +44,8 @@ export class TrackSplitter extends EventEmitter {
   private static readonly DEFAULT_MIN_SAVE_SECONDS = 0
   /** Extra seconds to keep at the start of a warm-promoted recording as a safety buffer. */
   private static readonly WARM_PAD_SEC = 0.1
+  /** resolveOutputPath() only returns null when duplicateAction is 'skip' and the file already exists. */
+  private static readonly DUPLICATE_SKIP_REASON = 'A file with this name already exists (duplicate action: skip)'
 
   private _recorder = new AudioRecorder()
   private _settings: TrackSplitterSettings | null = null
@@ -308,6 +310,7 @@ export class TrackSplitter extends EventEmitter {
         albumArtMime: track.albumArtMime,
         durationSec: 0,
         status: 'skipped',
+        error: TrackSplitter.DUPLICATE_SKIP_REASON,
         startedAt: Date.now()
       } satisfies RecordingEntry)
       return
@@ -366,6 +369,7 @@ export class TrackSplitter extends EventEmitter {
             albumArtMime: track.albumArtMime,
             durationSec: 0,
             status: 'skipped',
+            error: TrackSplitter.DUPLICATE_SKIP_REASON,
             startedAt: Date.now()
           } satisfies RecordingEntry)
         })
@@ -701,6 +705,7 @@ export class TrackSplitter extends EventEmitter {
           albumArtMime: track.albumArtMime,
           durationSec,
           status: 'skipped',
+          error: TrackSplitter.DUPLICATE_SKIP_REASON,
           startedAt
         } satisfies RecordingEntry)
         return

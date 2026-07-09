@@ -46,7 +46,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
           <Input
             value={local.outputDir}
             onChange={(e) => update({ outputDir: e.target.value })}
-            className="flex-1 font-mono text-xs"
+            className="flex-1 font-mono text-xs select-text"
           />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -204,7 +204,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
             value={local.ffmpegPath}
             onChange={(e) => update({ ffmpegPath: e.target.value })}
             placeholder={resolvedPath || 'Auto-detect…'}
-            className="flex-1 font-mono text-xs"
+            className="flex-1 font-mono text-xs select-text"
           />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -224,7 +224,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
             <TooltipContent side="top">Auto-detect ffmpeg</TooltipContent>
           </Tooltip>
         </div>
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-zinc-500 select-text">
           {local.ffmpegPath
             ? 'Custom path — clear the field to auto-detect.'
             : resolvedPath

@@ -306,7 +306,7 @@ function OutputStep({ settings, save, onComplete, onBack }: OutputStepProps) {
           <Input
             value={dir}
             onChange={(e) => setDir(e.target.value)}
-            className="flex-1 font-mono text-xs"
+            className="flex-1 font-mono text-xs select-text"
             spellCheck={false}
           />
           <Button variant="outline" size="icon" onClick={pickFolder} aria-label="Browse…">

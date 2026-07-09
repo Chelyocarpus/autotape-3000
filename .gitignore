@@ -31,3 +31,4 @@ Thumbs.db
 # electron-builder update config (generated)
 dev-app-update.yml
 /.github
+/.claude
