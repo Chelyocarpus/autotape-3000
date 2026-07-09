@@ -23,7 +23,6 @@ interface RecordButtonProps {
   trackCount: number
   onStart: () => void
   onStop: () => void
-  compact?: boolean
   tron?: boolean
 }
 
@@ -113,7 +112,7 @@ function VinylDisc({ isRecording, tron }: { isRecording: boolean; tron: boolean 
           />
 
           {/* Center label */}
-          <circle cx="56" cy="56" r="17" fill={isRecording ? '#d9826f' : '#b77466'} />
+          <circle cx="56" cy="56" r="17" fill={isRecording ? 'var(--rec-500)' : 'var(--color-amber-500)'} />
           {/* Label inner decorative ring */}
           <circle cx="56" cy="56" r="13" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.7" />
           {/* Spindle hole */}
@@ -132,7 +131,6 @@ export function RecordButton({
   trackCount,
   onStart,
   onStop,
-  compact = false,
   tron = false,
 }: RecordButtonProps) {
   const [taglineIndex, setTaglineIndex] = useState(0)
@@ -150,43 +148,6 @@ export function RecordButton({
     return () => clearInterval(id)
   }, [isRecording])
 
-  if (compact) {
-    return (
-      <div className="flex flex-col items-center gap-2 shrink-0">
-        <button
-          className={cn(
-            'group relative w-24 h-24 rounded-full cursor-pointer',
-            'transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900',
-            isRecording
-              ? tron ? 'focus-visible:ring-[#00d4ef] animate-[record-ring_1.8s_ease_infinite]' : 'focus-visible:ring-[#d9826f] animate-[record-ring_1.8s_ease_infinite]'
-              : tron ? 'focus-visible:ring-[#00d4ef] hover:scale-[1.08] hover:shadow-[0_0_40px_#00d4ef55] active:scale-[1.02]' : 'focus-visible:ring-amber-500 hover:scale-[1.08] hover:shadow-[0_0_40px_#b7746680] active:scale-[1.02]'
-          )}
-          onClick={isRecording ? onStop : onStart}
-          aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-        >
-          <VinylDisc isRecording={isRecording} tron={tron} />
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            {isRecording
-              ? <Square className="w-5 h-5 fill-white text-white drop-shadow" />
-              : <Play className="w-5 h-5 fill-white text-white drop-shadow translate-x-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200" />
-            }
-          </div>
-        </button>
-        <div className="text-center min-h-6">
-          {isRecording ? (
-            <p className="text-base font-mono font-light text-zinc-100 tabular-nums tracking-wider">
-              {formatElapsed(elapsed)}
-            </p>
-          ) : (
-            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">
-              {trackCount > 0 ? `${trackCount} saved` : 'Record'}
-            </p>
-          )}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col items-center gap-5 pt-1">
       {/* Vinyl record button */}
@@ -196,8 +157,8 @@ export function RecordButton({
             'group relative w-28 h-28 rounded-full cursor-pointer',
             'transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900',
             isRecording
-              ? tron ? 'focus-visible:ring-[#00d4ef] animate-[record-ring_1.8s_ease_infinite]' : 'focus-visible:ring-[#d9826f] animate-[record-ring_1.8s_ease_infinite]'
-              : tron ? 'focus-visible:ring-[#00d4ef] hover:scale-[1.08] hover:shadow-[0_0_40px_#00d4ef55] active:scale-[1.02]' : 'focus-visible:ring-amber-500 hover:scale-[1.08] hover:shadow-[0_0_40px_#b7746680] active:scale-[1.02]'
+              ? 'focus-visible:ring-[var(--rec-500)] animate-[record-ring_1.8s_ease_infinite]'
+              : 'focus-visible:ring-[var(--color-amber-500)] hover:scale-[1.08] hover:shadow-[0_0_40px_color-mix(in_srgb,var(--color-amber-500)_50%,transparent)] active:scale-[1.02]'
           )}
           onClick={isRecording ? onStop : onStart}
           aria-label={isRecording ? 'Stop recording' : 'Start recording'}
@@ -220,8 +181,8 @@ export function RecordButton({
             <p className="text-2xl font-mono font-light text-zinc-100 tabular-nums tracking-wider">
               {formatElapsed(elapsed)}
             </p>
-            <p className="text-[11px] text-[#d9826f]/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#d9826f] animate-pulse inline-block" />
+            <p className="text-[11px] text-[var(--rec-500)]/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--rec-500)] animate-pulse inline-block" />
               {RECORDING_STATUSES[statusIndex]}
             </p>
           </>

@@ -23,6 +23,9 @@ pnpm-debug.log*
 Thumbs.db
 .eslintcache
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Local env files
 .env
 .env.*
@@ -31,3 +34,4 @@ Thumbs.db
 # electron-builder update config (generated)
 dev-app-update.yml
 /.github
+/.claude

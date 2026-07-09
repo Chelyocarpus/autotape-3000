@@ -144,7 +144,7 @@ export class AudioRecorder extends EventEmitter {
       '-audio_buffer_size', '50',
       '-thread_queue_size', '512',
       '-i', input,
-      '-vn', '-ar', '44100', '-ac', '2',
+      '-vn', '-ac', '2',
       '-af', 'silencedetect=noise=-60dB:d=5',
       '-fflags', '+nobuffer',
       '-flush_packets', '1',
@@ -248,6 +248,7 @@ export class AudioRecorder extends EventEmitter {
           '-i', wavPath,
           '-codec:a', 'libmp3lame',
           '-b:a', `${bitrate}k`,
+          '-abr', '1',
           '-id3v2_version', '3',
           mp3Path
         ],
@@ -261,27 +262,45 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
+   * Best-effort read of an MP3's nominal bitrate (in kbps) from ffmpeg's own
+   * stream-info output, so a re-trim can preserve it instead of guessing.
+   */
+  private static async _probeMp3BitrateKbps(binary: string, filePath: string): Promise<number | null> {
+    const output = await runFfmpegAsync(binary, ['-i', filePath])
+    const match = /\bbitrate:\s*(\d+)\s*kb\/s/.exec(output)
+    return match ? Number(match[1]) : null
+  }
+
+  /**
    * Re-trim an already-saved MP3 or WAV file to the given [startSec, endSec] range.
    * The output replaces the original file in-place.
    */
   static async retrimFile(filePath: string, startSec: number, endSec: number): Promise<void> {
+    const binary = getFfmpegPath()
+    const duration = Math.max(0.1, endSec - startSec)
+    const isWav = filePath.toLowerCase().endsWith('.wav')
+    const tmpPath = `${filePath}.retrim${isWav ? '.wav' : '.mp3'}`
+
+    let args: string[]
+    if (isWav) {
+      args = [
+        '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
+        '-i', filePath, '-c', 'copy', tmpPath
+      ]
+    } else {
+      // Re-encode at the file's original bitrate rather than a fixed VBR
+      // quality, so trimming a 128kbps recording doesn't balloon it to ~245kbps.
+      const bitrate = (await AudioRecorder._probeMp3BitrateKbps(binary, filePath)) ?? 192
+      args = [
+        '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
+        '-i', filePath,
+        '-codec:a', 'libmp3lame', '-b:a', `${bitrate}k`, '-abr', '1',
+        '-map_metadata', '0', '-id3v2_version', '3',
+        tmpPath
+      ]
+    }
+
     return new Promise((resolve, reject) => {
-      const binary = getFfmpegPath()
-      const duration = Math.max(0.1, endSec - startSec)
-      const isWav = filePath.toLowerCase().endsWith('.wav')
-      const tmpPath = `${filePath}.retrim${isWav ? '.wav' : '.mp3'}`
-      const args = isWav
-        ? [
-            '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
-            '-i', filePath, '-c', 'copy', tmpPath
-          ]
-        : [
-            '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
-            '-i', filePath,
-            '-codec:a', 'libmp3lame', '-q:a', '0',
-            '-map_metadata', '0', '-id3v2_version', '3',
-            tmpPath
-          ]
       execFile(binary, args, { windowsHide: true, timeout: 120_000 }, (err) => {
         if (err) { reject(err); return }
         try {

@@ -25,6 +25,9 @@
   --amber-500: #b77466;
   --amber-600: #a06358;
   --amber-700: #957c62;  /*  4.6:1 on z-800 canvas bg — WCAG AA */
+
+  /* Recording / error accent — dark theme (6.4:1 on z-900 card bg — WCAG AA) */
+  --rec-500: #d9826f;
 }
 
 /* Light theme — warm parchment */
@@ -52,6 +55,9 @@
   --amber-500: #6b4840;
   --amber-600: #5e3c34;
   --amber-700: #946450;  /* 3.4:1 on z-800 canvas bg — WCAG AA UI component */
+
+  /* Recording / error accent — light theme (6.0:1 on z-950 bg — WCAG AA) */
+  --rec-500: #844f44;
 }
 
 @theme inline {
@@ -74,6 +80,14 @@
   --color-amber-500: var(--amber-500);
   --color-amber-600: var(--amber-600);
   --color-amber-700: var(--amber-700);
+
+  /* Recording / error accent — theme-aware. Prefer referencing this as a raw
+     var(--rec-500) in arbitrary values (e.g. text-[var(--rec-500)]) rather than
+     the generated text-rec-500/bg-rec-500 utilities — named theme-color utilities
+     get inlined at build time (see the [data-tron="true"] amber overrides below),
+     which would silently break the Tron-mode repaint. A raw var() reference is
+     resolved by the browser at paint time and is immune to that. */
+  --color-rec-500: var(--rec-500);
 }
 
 @keyframes soundwave {
@@ -82,9 +96,9 @@
 }
 
 @keyframes record-ring {
-  0%   { box-shadow: 0 0 0 0 #d9826f99; }
-  70%  { box-shadow: 0 0 0 8px #d9826f00; }
-  100% { box-shadow: 0 0 0 0 #d9826f00; }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec-500) 60%, transparent); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes vinyl-spin {
@@ -243,6 +257,11 @@ html, body, #root {
   --color-amber-500: #009ab5;
   --color-amber-600: #006080;
   --color-amber-700: #004466;
+
+  /* Override recording/error accent → electric cyan. Overriding the base
+     --rec-500 (rather than --color-rec-500) is what makes both raw
+     var(--rec-500) references and the generated rec-500 utilities repaint. */
+  --rec-500: #00d4ef;
 
   animation: tron-flicker 6s linear infinite;
 }
