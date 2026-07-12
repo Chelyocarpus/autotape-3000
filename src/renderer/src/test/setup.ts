@@ -22,6 +22,9 @@ function makeElectronApiMock(): Window['electronAPI'] {
   return {
     getAppVersion: () => Promise.resolve('0.0.0-test'),
 
+    getTheme: () => Promise.resolve('dark' as const),
+    saveTheme: () => Promise.resolve(),
+
     onTrackChanged: () => () => {},
     onPlayStateChanged: () => () => {},
     onArtworkUpdated: () => () => {},

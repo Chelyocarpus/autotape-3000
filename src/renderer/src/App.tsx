@@ -36,6 +36,10 @@ export function App() {
         ? { color: '#1a100d', symbolColor: '#b89080' }
         : { color: '#fdf3ea', symbolColor: '#6b4e3e' }
     )
+    // Persist so the next launch's initial window (created before any
+    // renderer JS runs) can set the correct title bar overlay from the start
+    // instead of hardcoding one and flashing to this theme afterward.
+    window.electronAPI.saveTheme(theme)
   }, [theme])
 
   const toggleTheme = useCallback(() => {

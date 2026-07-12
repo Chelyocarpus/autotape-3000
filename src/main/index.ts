@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, Notification } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, nativeTheme, Notification } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { pathToFileURL } from 'url'
@@ -9,6 +9,7 @@ import { AudioRecorder } from './services/AudioRecorder'
 import { listAudioDevices } from './services/AudioDevices'
 import { loadSettings, saveSettings } from './services/SettingsStore'
 import { setFfmpegOverride, detectFfmpegPath, getFfmpegPath } from './services/FfmpegResolver'
+import { loadTheme, saveTheme, type Theme } from './services/ThemeStore'
 import {
   loadAllTrimPresets,
   saveTrimPreset,
@@ -159,8 +160,22 @@ function registerArtProtocol(): void {
   })
 }
 
+// ─── Theme / title bar overlay colors ──────────────────────────────────────
+// Mirrors the color pairs App.tsx uses for the in-page theme toggle, so the
+// native title bar buttons never visibly mismatch the rest of the UI.
+const TITLEBAR_OVERLAY: Record<Theme, { color: string; symbolColor: string }> = {
+  dark: { color: '#1a100d', symbolColor: '#b89080' },
+  light: { color: '#fdf3ea', symbolColor: '#6b4e3e' }
+}
+
+/** The user's last explicitly-chosen theme, falling back to the OS preference. */
+function resolveInitialTheme(): Theme {
+  return loadTheme() ?? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+}
+
 function createWindow(): void {
   const savedState = loadWindowState()
+  const initialTheme = resolveInitialTheme()
 
   // Only restore position if the saved bounds are still visible on a display
   const hasValidPosition =
@@ -177,8 +192,7 @@ function createWindow(): void {
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#fdf3ea',
-      symbolColor: '#6b4e3e',
+      ...TITLEBAR_OVERLAY[initialTheme],
       height: 32
     },
     autoHideMenuBar: true,
@@ -287,6 +301,11 @@ function wireSplitter(): void {
 function registerIpcHandlers(): void {
   // App metadata
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  // Theme — lets the renderer persist its choice so the next launch's
+  // initial title bar overlay (set before any renderer JS runs) matches.
+  ipcMain.handle('theme:get', () => resolveInitialTheme())
+  ipcMain.handle('theme:save', (_event, theme: Theme) => saveTheme(theme))
 
   // GSMTC
   ipcMain.handle('gsmtc:get-current', () => gsmtcService.currentTrack)

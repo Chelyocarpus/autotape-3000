@@ -8,6 +8,10 @@ declare global {
       // App metadata
       getAppVersion: () => Promise<string>
 
+      // Theme
+      getTheme: () => Promise<'dark' | 'light'>
+      saveTheme: (theme: 'dark' | 'light') => Promise<void>
+
       // GSMTC
       onTrackChanged: (cb: (track: GsmtcTrack) => void) => () => void
       onPlayStateChanged: (cb: (isPlaying: boolean) => void) => () => void

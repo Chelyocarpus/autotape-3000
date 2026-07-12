@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App metadata
   getAppVersion: () => ipcRenderer.invoke('app:get-version') as Promise<string>,
 
+  // Theme — main resolves persisted-choice-or-OS-preference before the
+  // window is even created, so its initial title bar overlay never flashes
+  // the wrong color. The renderer persists its choice back via saveTheme.
+  getTheme: () => ipcRenderer.invoke('theme:get') as Promise<'dark' | 'light'>,
+  saveTheme: (theme: 'dark' | 'light') => ipcRenderer.invoke('theme:save', theme) as Promise<void>,
+
   // GSMTC events (main → renderer pushes)
   onTrackChanged: (cb: (track: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, track: unknown) => cb(track)
