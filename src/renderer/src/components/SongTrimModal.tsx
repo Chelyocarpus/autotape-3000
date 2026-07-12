@@ -60,7 +60,6 @@ function drawWaveform(
   const clr800 = style.getPropertyValue('--z-800').trim() || '#2a1b16'
   const clr500 = style.getPropertyValue('--z-500').trim() || '#b89080'
   const clrAmber = style.getPropertyValue('--color-amber-400').trim() || '#e2b59a'
-  const clrAmberDim = style.getPropertyValue('--color-amber-700').trim() || '#957c62'
 
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = isDark ? clr800 : '#ecdabc'

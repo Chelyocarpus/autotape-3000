@@ -5,6 +5,13 @@ import type { GsmtcTrack, UserSettings, RecordingEntry, AudioDevice, SourceSessi
 declare global {
   interface Window {
     electronAPI: {
+      // App metadata
+      getAppVersion: () => Promise<string>
+
+      // Theme
+      getTheme: () => Promise<'dark' | 'light'>
+      saveTheme: (theme: 'dark' | 'light') => Promise<void>
+
       // GSMTC
       onTrackChanged: (cb: (track: GsmtcTrack) => void) => () => void
       onPlayStateChanged: (cb: (isPlaying: boolean) => void) => () => void
@@ -37,12 +44,8 @@ declare global {
       // Shell
       openPath: (path: string) => Promise<void>
 
-      // Window controls
-      minimizeWindow: () => Promise<void>
-      maximizeWindow: () => Promise<void>
-      closeWindow: () => Promise<void>
-      isWindowMaximized: () => Promise<boolean>
-      onWindowMaximizeChange: (cb: (isMaximized: boolean) => void) => () => void
+      // Title bar overlay (native Windows min/max/close buttons)
+      setTitleBarOverlay: (overlay: { color: string; symbolColor: string }) => Promise<void>
 
       // Trim / presets
       trimApply: (filePath: string, startSec: number, endSec: number) => Promise<{ durationSec: number }>
@@ -139,6 +142,15 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
   }, [isRecording])
 
   return { isRecording, currentTrack, elapsed, silenceWarning, start, stop }
+}
+
+/** Read the running app's version (from package.json via Electron) */
+export function useAppVersion(): string {
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    window.electronAPI.getAppVersion().then(setVersion).catch(() => {})
+  }, [])
+  return version
 }
 
 /** Load and save settings */

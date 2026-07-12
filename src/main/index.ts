@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, nativeTheme, Notification } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { pathToFileURL } from 'url'
@@ -9,6 +9,7 @@ import { AudioRecorder } from './services/AudioRecorder'
 import { listAudioDevices } from './services/AudioDevices'
 import { loadSettings, saveSettings } from './services/SettingsStore'
 import { setFfmpegOverride, detectFfmpegPath, getFfmpegPath } from './services/FfmpegResolver'
+import { loadTheme, saveTheme, type Theme } from './services/ThemeStore'
 import {
   loadAllTrimPresets,
   saveTrimPreset,
@@ -159,8 +160,22 @@ function registerArtProtocol(): void {
   })
 }
 
+// ─── Theme / title bar overlay colors ──────────────────────────────────────
+// Mirrors the color pairs App.tsx uses for the in-page theme toggle, so the
+// native title bar buttons never visibly mismatch the rest of the UI.
+const TITLEBAR_OVERLAY: Record<Theme, { color: string; symbolColor: string }> = {
+  dark: { color: '#1a100d', symbolColor: '#b89080' },
+  light: { color: '#fdf3ea', symbolColor: '#6b4e3e' }
+}
+
+/** The user's last explicitly-chosen theme, falling back to the OS preference. */
+function resolveInitialTheme(): Theme {
+  return loadTheme() ?? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+}
+
 function createWindow(): void {
   const savedState = loadWindowState()
+  const initialTheme = resolveInitialTheme()
 
   // Only restore position if the saved bounds are still visible on a display
   const hasValidPosition =
@@ -175,7 +190,11 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 480,
     show: false,
-    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      ...TITLEBAR_OVERLAY[initialTheme],
+      height: 32
+    },
     autoHideMenuBar: true,
     icon: join(__dirname, '../../resources/icon.png'),
     backgroundColor: '#0f0f13',
@@ -205,14 +224,6 @@ function createWindow(): void {
       _flushWindowState = null
     }
     mainWindow = null
-  })
-
-  mainWindow.on('maximize', () => {
-    mainWindow?.webContents.send('window:maximized')
-  })
-
-  mainWindow.on('unmaximize', () => {
-    mainWindow?.webContents.send('window:unmaximized')
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -264,15 +275,38 @@ function wireSplitter(): void {
 
   trackSplitter.on('silenceWarning', () => {
     mainWindow?.webContents.send('recorder:silence-warning')
+
+    // The in-app modal is invisible if the user is tabbed away — pair it with
+    // a native toast and a taskbar flash so the warning isn't silent too.
+    if (mainWindow && !mainWindow.isFocused()) {
+      mainWindow.flashFrame(true)
+    }
+
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Autotape 3000',
+        body: 'No audio detected — the current recording may be silent.',
+        icon: join(__dirname, '../../resources/icon.png')
+      }).show()
+    }
   })
 
   trackSplitter.on('audioDetected', () => {
     mainWindow?.webContents.send('recorder:audio-detected')
+    mainWindow?.flashFrame(false)
   })
 }
 
 // ─── IPC handlers ──────────────────────────────────────────────────────────
 function registerIpcHandlers(): void {
+  // App metadata
+  ipcMain.handle('app:get-version', () => app.getVersion())
+
+  // Theme — lets the renderer persist its choice so the next launch's
+  // initial title bar overlay (set before any renderer JS runs) matches.
+  ipcMain.handle('theme:get', () => resolveInitialTheme())
+  ipcMain.handle('theme:save', (_event, theme: Theme) => saveTheme(theme))
+
   // GSMTC
   ipcMain.handle('gsmtc:get-current', () => gsmtcService.currentTrack)
   ipcMain.handle('gsmtc:list-sessions', async () => gsmtcService.listSessions())
@@ -344,14 +378,14 @@ function registerIpcHandlers(): void {
     shell.showItemInFolder(filePath)
   })
 
-  // Window controls
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize())
-  ipcMain.handle('window:maximize', () => {
-    if (!mainWindow) return
-    mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize()
-  })
-  ipcMain.handle('window:close', () => mainWindow?.close())
-  ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false)
+  // Title bar overlay (min/max/close buttons are drawn natively by Windows so
+  // Snap Layouts works; keep their color in sync with the app's light/dark theme)
+  ipcMain.handle(
+    'window:set-titlebar-overlay',
+    (_event, overlay: { color: string; symbolColor: string }) => {
+      mainWindow?.setTitleBarOverlay({ ...overlay, height: 32 })
+    }
+  )
 
   // ─── Trim / preset handlers ─────────────────────────────────────────────
 

@@ -2,6 +2,15 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 // Expose a typed API to the renderer via contextBridge
 contextBridge.exposeInMainWorld('electronAPI', {
+  // App metadata
+  getAppVersion: () => ipcRenderer.invoke('app:get-version') as Promise<string>,
+
+  // Theme — main resolves persisted-choice-or-OS-preference before the
+  // window is even created, so its initial title bar overlay never flashes
+  // the wrong color. The renderer persists its choice back via saveTheme.
+  getTheme: () => ipcRenderer.invoke('theme:get') as Promise<'dark' | 'light'>,
+  saveTheme: (theme: 'dark' | 'light') => ipcRenderer.invoke('theme:save', theme) as Promise<void>,
+
   // GSMTC events (main → renderer pushes)
   onTrackChanged: (cb: (track: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, track: unknown) => cb(track)
@@ -69,21 +78,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Shell
   openPath: (path: string) => ipcRenderer.invoke('shell:open-path', path),
 
-  // Window controls
-  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
-  maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
-  closeWindow: () => ipcRenderer.invoke('window:close'),
-  isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
-  onWindowMaximizeChange: (cb: (isMaximized: boolean) => void) => {
-    const maximize = () => cb(true)
-    const unmaximize = () => cb(false)
-    ipcRenderer.on('window:maximized', maximize)
-    ipcRenderer.on('window:unmaximized', unmaximize)
-    return () => {
-      ipcRenderer.off('window:maximized', maximize)
-      ipcRenderer.off('window:unmaximized', unmaximize)
-    }
-  },
+  // Title bar overlay (native Windows min/max/close buttons)
+  setTitleBarOverlay: (overlay: { color: string; symbolColor: string }) =>
+    ipcRenderer.invoke('window:set-titlebar-overlay', overlay),
 
   // ─── Trim / preset ─────────────────────────────────────────────────────
   trimApply: (filePath: string, startSec: number, endSec: number) =>

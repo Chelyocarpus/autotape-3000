@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { beforeEach } from 'vitest'
 
 // jsdom has no ResizeObserver; SongTrimModal and other components use it.
 class ResizeObserverStub {
@@ -19,6 +20,11 @@ HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElemen
 // stand-in it can override per-test with vi.spyOn(window.electronAPI, ...).
 function makeElectronApiMock(): Window['electronAPI'] {
   return {
+    getAppVersion: () => Promise.resolve('0.0.0-test'),
+
+    getTheme: () => Promise.resolve('dark' as const),
+    saveTheme: () => Promise.resolve(),
+
     onTrackChanged: () => () => {},
     onPlayStateChanged: () => () => {},
     onArtworkUpdated: () => () => {},
@@ -55,11 +61,7 @@ function makeElectronApiMock(): Window['electronAPI'] {
 
     openPath: () => Promise.resolve(),
 
-    minimizeWindow: () => Promise.resolve(),
-    maximizeWindow: () => Promise.resolve(),
-    closeWindow: () => Promise.resolve(),
-    isWindowMaximized: () => Promise.resolve(false),
-    onWindowMaximizeChange: () => () => {},
+    setTitleBarOverlay: () => Promise.resolve(),
 
     trimApply: () => Promise.resolve({ durationSec: 0 }),
     trimGetPreset: () => Promise.resolve(null),

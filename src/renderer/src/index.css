@@ -152,6 +152,12 @@ html, body, #root {
   -webkit-app-region: no-drag;
 }
 
+/* Keep content clear of the native min/max/close buttons Windows draws
+   over the titleBarOverlay area on the right. */
+.app-titlebar {
+  width: env(titlebar-area-width, 100%);
+}
+
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--z-700); border-radius: 2px; }
