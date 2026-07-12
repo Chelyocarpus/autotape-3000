@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { FolderOpen, RefreshCw, FileAudio, Gauge, Radio, Timer, Headphones, FileMinus2, Cpu, Clapperboard } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -6,7 +6,7 @@ import { Label } from './ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Separator } from './ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import { useSettings, useAudioDevices, useSourceSessions, useFfmpegPath } from '../hooks/useIpc'
+import { useSettings, useAudioDevices, useSourceSessions, useFfmpegPath, useAppVersion } from '../hooks/useIpc'
 import type { UserSettings } from '../types'
 
 import { ONBOARDING_KEY } from './OnboardingWizard'
@@ -16,6 +16,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
   const devices = useAudioDevices()
   const sourceSessions = useSourceSessions()
   const { resolvedPath, detecting, detect } = useFfmpegPath()
+  const appVersion = useAppVersion()
   const [local, setLocal] = useState<UserSettings | null>(null)
 
   useEffect(() => {
@@ -254,6 +255,12 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
         </Button>
         <p className="text-xs text-zinc-500">Re-run the first-time setup to reconfigure FFmpeg, audio device, or save location.</p>
       </div>
+
+      <Separator />
+
+      <p className="text-xs text-zinc-500 select-text">
+        Autotape 3000{appVersion ? ` v${appVersion}` : ''}
+      </p>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 {
   "name": "autotape3000",
-  "version": "2.0.0",
+  "version": "2.5.0",
   "description": "Record system audio per-track using GSMTC",
   "main": "./out/main/index.js",
   "author": "autotape3000",

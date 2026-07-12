@@ -5,14 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-07-12
+
+### Added
+
+- **App version now shown in Settings** — The Settings panel footer displays "Autotape 3000 v{version}", read via a new `app:get-version` IPC channel (`app.getVersion()`) exposed through the preload bridge as `getAppVersion()` and a `useAppVersion()` hook. Previously there was no way to check which build was installed from within the app itself.
+
+### Fixed
+
+- **`package.json` version was frozen at `2.0.0` since project scaffolding** — Every release since has been tracked in `changelog.md` but never reflected in `package.json`, so `app.getVersion()` (and anything else reading the package version) would have reported a version 5 releases stale. Bumped to `2.5.0` to match this release.
+- **Pre-existing `tsc` errors surfaced while touching these files** — `SettingsPanel.tsx` had an unused `useCallback` import; `SongTrimModal.tsx`'s `drawWaveform` computed an unused `clrAmberDim` color that was never applied to the canvas (the cut-region wash overlay already de-emphasizes those areas); `test/setup.ts` referenced the ambient `beforeEach` global without importing it, which only worked at runtime (vitest's `globals: true`) but not under `tsc --noEmit`. Removed the two dead values and added the missing `import { beforeEach } from 'vitest'`, matching every other test file's explicit-import style.
+
 ## [2.4.2] - 2026-07-10
 
 ### Added
 
 - **`AudioRecorder` unit tests** — New `src/main/services/__tests__/AudioRecorder.test.ts` covers the two behaviors from 2.4.1 that had no direct test coverage: the ffmpeg capture args no longer forcing a 44.1kHz sample rate, and `retrimFile` re-encoding MP3s in ABR mode at the source file's probed bitrate (with a 192kbps fallback when probing finds nothing usable), while WAV re-trims skip probing entirely and stream-copy instead.
+- **Native toast + taskbar flash on silence detection** — The in-app silence modal was only visible if Autotape's window happened to be focused, but the app is meant to run in the background while you use something else. `wireSplitter`'s `silenceWarning` handler now also fires a native Windows `Notification` (so it lands in the notification center even if the app is minimized or behind another window) and calls `mainWindow.flashFrame(true)` when the window isn't focused, which Windows automatically stops once the user activates the window. `audioDetected` clears the flash if silence resolves before the user comes back.
+
+### Changed
+
+- **Native title bar buttons for Windows 11 Snap Layouts** — Replaced the custom-drawn SVG minimize/maximize/close buttons with Electron's `titleBarOverlay` (`frame: false` → `titleBarStyle: 'hidden'` + `titleBarOverlay`), so Windows renders and hit-tests the real system buttons. Hovering the maximize button now shows the OS's Snap Layouts flyout, matching apps like VS Code and Windows Terminal. The overlay's colors sync with the app's light/dark theme toggle via a new `window:set-titlebar-overlay` IPC channel; the old `window:minimize`/`maximize`/`close`/`is-maximized` channels were removed as dead code.
 
 ### Fixed
 
+- **Theme now defaults to the OS light/dark preference on first run** — `App.tsx` previously fell back to a hardcoded `'light'` whenever no theme was saved in `localStorage`, ignoring `prefers-color-scheme` entirely. It now checks `window.matchMedia('(prefers-color-scheme: dark)')` and only falls back to `'light'` if there's no saved choice and no OS signal available.
 - **Tailwind arbitrary-value syntax for the recording/error accent** — `ring-(--rec-500)`, `text-(--rec-500)`, and `bg-(--rec-500)` in `RecordButton.tsx`/`RecordingLog.tsx` used Tailwind v4's CSS-variable shorthand syntax; switched to the more broadly-recognized `ring-[var(--rec-500)]`/`text-[var(--rec-500)]`/`bg-[var(--rec-500)]` bracket form for compatibility with tooling that doesn't parse the shorthand. Verified both forms compile to identical output CSS, so this is a no-op at runtime.
 
 ### Removed

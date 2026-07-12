@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Sun, Moon, Minus, Square, X, Library, SlidersHorizontal, AlertTriangle } from 'lucide-react'
+import { Sun, Moon, Library, SlidersHorizontal, AlertTriangle } from 'lucide-react'
 import { NowPlaying } from './components/NowPlaying'
 import { RecordButton } from './components/RecordButton'
 import { RecordingLog } from './components/RecordingLog'
@@ -21,7 +21,8 @@ export function App() {
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('autotape-theme') as 'dark' | 'light' | null
-    const initial = saved ?? 'light'
+    const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    const initial = saved ?? (prefersDark ? 'dark' : 'light')
     document.documentElement.setAttribute('data-theme', initial)
     return initial
   })
@@ -29,6 +30,12 @@ export function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('autotape-theme', theme)
+    // Keep the native title bar buttons in sync with the app theme
+    window.electronAPI.setTitleBarOverlay(
+      theme === 'dark'
+        ? { color: '#1a100d', symbolColor: '#b89080' }
+        : { color: '#fdf3ea', symbolColor: '#6b4e3e' }
+    )
   }, [theme])
 
   const toggleTheme = useCallback(() => {
@@ -116,21 +123,14 @@ export function App() {
     prevSilenceWarning.current = silenceWarning
   }, [silenceWarning])
 
-  const [isMaximized, setIsMaximized] = useState(false)
-
-  useEffect(() => {
-    window.electronAPI.isWindowMaximized().then(setIsMaximized).catch(() => {})
-    const unsub = window.electronAPI.onWindowMaximizeChange(setIsMaximized)
-    return unsub
-  }, [])
-
   return (
     <TooltipProvider delayDuration={600}>
     <div
       className="app-shell flex flex-col h-screen overflow-hidden"
     >
-      {/* Title bar drag region */}
-      <div className="h-8 shrink-0 flex items-center justify-between px-4 app-drag-region">
+      {/* Title bar drag region — width is inset to leave room for the native
+          min/max/close buttons Windows draws via titleBarOverlay */}
+      <div className="h-8 shrink-0 flex items-center justify-between px-4 app-drag-region app-titlebar">
         <div className="flex items-center gap-2 select-none">
           <svg viewBox="0 0 256 256" className="w-4 h-4 shrink-0 text-zinc-500" fill="currentColor" aria-hidden="true">
               <path d="M224,44H32A20,20,0,0,0,12,64V192a20,20,0,0,0,20,20H224a20,20,0,0,0,20-20V64A20,20,0,0,0,224,44Zm-4,144H183l-12.6-16.8A8,8,0,0,0,164,168H92a8,8,0,0,0-6.4,3.2L73,188H36V68H220ZM82,152h92a34,34,0,0,0,0-68H82a34,34,0,0,0,0,68Zm0-44a10,10,0,1,1-10,10A10,10,0,0,1,82,108Zm102,10a10,10,0,1,1-10-10A10,10,0,0,1,184,118Zm-42.5,10h-27a34.08,34.08,0,0,0,0-20h27a34.08,34.08,0,0,0,0,20Z"/>
@@ -160,47 +160,6 @@ export function App() {
             {theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           </TooltipContent>
         </Tooltip>
-
-        <div className="app-no-drag flex items-center gap-0.5 ml-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
-                onClick={() => window.electronAPI.minimizeWindow()}
-                aria-label="Minimize"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Minimize</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
-                onClick={() => window.electronAPI.maximizeWindow()}
-                aria-label={isMaximized ? 'Restore' : 'Maximize'}
-              >
-                <Square className={`w-3 h-3 ${isMaximized ? 'opacity-60' : ''}`} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{isMaximized ? 'Restore' : 'Maximize'}</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/15 transition-colors"
-                onClick={() => window.electronAPI.closeWindow()}
-                aria-label="Close"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Close</TooltipContent>
-          </Tooltip>
-        </div>
       </div>
 
       {/* Main content — sidebar + full-height list */}
