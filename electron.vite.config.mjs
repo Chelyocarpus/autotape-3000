@@ -23,13 +23,23 @@ export default defineConfig({
   //    `output.format: 'cjs'` keeps both outputs as plain .js, matching what
   //    this project (package.json#main, the preload path in createWindow())
   //    has always expected.
+  //
+  // 3. '@ffmpeg-installer/ffmpeg' must also stay external, for a different
+  //    reason: its own package code locates the bundled ffmpeg binary via
+  //    `path.join(__dirname, ...)` relative to *its own* file. Inlining that
+  //    code into this bundle makes `__dirname` resolve to out/main instead of
+  //    the real node_modules/@ffmpeg-installer folder, so every candidate path
+  //    it tries is wrong and it throws (a bare string, not an Error — which is
+  //    why Electron's crash dialog just says "undefined: undefined") in any
+  //    packaged build not sitting in this exact dev checkout. Keeping it a
+  //    real require() lets Electron's asarUnpack path redirection work.
   main: {
     build: {
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts')
         },
-        external: ['electron'],
+        external: ['electron', '@ffmpeg-installer/ffmpeg'],
         output: {
           format: 'cjs'
         }
