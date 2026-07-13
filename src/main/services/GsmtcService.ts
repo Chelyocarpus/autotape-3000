@@ -13,6 +13,8 @@ export interface GsmtcTrack {
   albumArtMime?: string
   sourceAppId?: string
   positionMs?: number
+  /** Unix ms timestamp of when the source app last pushed `positionMs` — see getLivePositionMs(). */
+  positionUpdatedAtMs?: number
   isPlaying: boolean
 }
 
@@ -32,6 +34,7 @@ const EMPTY_TRACK: GsmtcTrack = {
   albumArtMime: '',
   sourceAppId: '',
   positionMs: 0,
+  positionUpdatedAtMs: 0,
   isPlaying: false
 }
 
@@ -43,6 +46,21 @@ export function tracksEqual(a: GsmtcTrack, b: GsmtcTrack): boolean {
     a.album === b.album &&
     (a.sourceAppId ?? '') === (b.sourceAppId ?? '')
   )
+}
+
+/**
+ * GSMTC's positionMs is a snapshot the source app pushes on its own schedule —
+ * it does not advance between pushes. Extrapolate from positionUpdatedAtMs so
+ * callers get an accurate "position right now" instead of a stale snapshot,
+ * which matters for the trim/crossover math around track transitions.
+ * Exported for unit testing — pure, no I/O.
+ */
+export function getLivePositionMs(track: GsmtcTrack, nowMs: number): number {
+  const position = track.positionMs ?? 0
+  const updatedAt = track.positionUpdatedAtMs
+  if (!track.isPlaying || !updatedAt) return position
+  const elapsed = nowMs - updatedAt
+  return elapsed > 0 ? position + elapsed : position
 }
 
 /** Exported for unit testing — pure heuristic, no I/O. */
@@ -91,6 +109,12 @@ export class GsmtcService extends EventEmitter {
   private _metadataPending = false
   private _metadataPendingPollCount = 0
   private _prevTrackBeforeReset: GsmtcTrack = { ...EMPTY_TRACK }
+  // Bumped on every _spawnLoop() call. Lets a spawned process's event handlers tell
+  // whether they're still "the current" one — killing a process is not instantaneous,
+  // so a rapid setSourceFilter() (kill old, spawn new) can leave the old process's
+  // stdout still delivering a few buffered lines after the new one has already started,
+  // which would otherwise interleave both processes' output into _handleTrack().
+  private _spawnGeneration = 0
 
   get currentTrack(): GsmtcTrack {
     return this._currentTrack
@@ -179,6 +203,7 @@ export class GsmtcService extends EventEmitter {
 
   stop(): void {
     this._stopped = true
+    this._spawnGeneration++ // invalidate any in-flight output from the process being killed below
     this._clearRestartTimer()
     if (this._readline) {
       this._readline.close()
@@ -191,6 +216,8 @@ export class GsmtcService extends EventEmitter {
   }
 
   private _spawnLoop(intervalMs: number): void {
+    const generation = ++this._spawnGeneration
+
     const proc = spawn(
       'powershell.exe',
       [
@@ -214,6 +241,10 @@ export class GsmtcService extends EventEmitter {
     const rl = createInterface({ input: proc.stdout!, crlfDelay: Infinity })
     this._readline = rl
     rl.on('line', (raw) => {
+      // Killing a process isn't instantaneous — ignore any lines still in flight
+      // from a process that's been superseded by a newer spawn (e.g. a rapid
+      // setSourceFilter()), so its output can't interleave with the new one's.
+      if (generation !== this._spawnGeneration) return
       const line = raw.trim()
       if (!line) return
       try {
@@ -231,7 +262,10 @@ export class GsmtcService extends EventEmitter {
         this._readline = null
       }
       if (this._process === proc) this._process = null
-      if (!this._stopped) {
+      // Only auto-restart if this was still the current generation — a superseded
+      // process exiting (after being killed by setSourceFilter) must not spawn a
+      // redundant extra loop on top of the replacement that was already started.
+      if (!this._stopped && generation === this._spawnGeneration) {
         this._restartTimer = setTimeout(() => {
           this._restartTimer = null
           this._spawnLoop(intervalMs)
@@ -292,7 +326,9 @@ export class GsmtcService extends EventEmitter {
   private _handleTrack(track: GsmtcTrack): void {
     const prev = this._currentTrack
     const pos = (track.positionMs ?? 0)
-    log(`[GSMTC] poll  pos=${pos}ms isPlaying=${track.isPlaying} title="${track.title}" artist="${track.artist}" pending=${this._metadataPending}`)
+    // Per-poll log disabled — fires every _intervalMs (default 50ms) and drowns out
+    // everything else. Uncomment when debugging GSMTC polling itself.
+    // log(`[GSMTC] poll  pos=${pos}ms isPlaying=${track.isPlaying} title="${track.title}" artist="${track.artist}" pending=${this._metadataPending}`)
 
     // Waiting for real metadata after a position-reset early-stop sentinel.
     if (this._metadataPending) {

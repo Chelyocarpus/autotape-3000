@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Recording
   startRecording: () => ipcRenderer.invoke('recorder:start'),
-  stopRecording: () => ipcRenderer.invoke('recorder:stop'),
+  stopRecording: () => ipcRenderer.invoke('recorder:stop') as Promise<'stopped' | 'pending'>,
 
   onRecordingStarted: (cb: (track: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, track: unknown) => cb(track)
@@ -47,6 +47,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: Electron.IpcRendererEvent, entry: unknown) => cb(entry)
     ipcRenderer.on('recorder:finished', handler)
     return () => ipcRenderer.off('recorder:finished', handler)
+  },
+
+  onRecordingStopped: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('recorder:stopped', handler)
+    return () => ipcRenderer.off('recorder:stopped', handler)
+  },
+
+  onRecordingIdle: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('recorder:idle', handler)
+    return () => ipcRenderer.off('recorder:idle', handler)
   },
 
   onSilenceWarning: (cb: () => void) => {
@@ -67,6 +79,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Audio devices
   getAudioDevices: () => ipcRenderer.invoke('audio:devices'),
+  readAudioFile: (filePath: string) => ipcRenderer.invoke('audio:read-file', filePath) as Promise<Uint8Array>,
 
   // ffmpeg binary path
   detectFfmpeg: () => ipcRenderer.invoke('ffmpeg:detect') as Promise<string>,

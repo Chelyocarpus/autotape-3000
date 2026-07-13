@@ -21,7 +21,7 @@ describe('SettingsPanel', () => {
 
     expect(await screen.findByText('Output Folder')).toBeInTheDocument()
     expect(screen.getByText('Format')).toBeInTheDocument()
-    expect(screen.getByText('Audio Device (WASAPI)')).toBeInTheDocument()
+    expect(screen.getByText('Audio Capture Method')).toBeInTheDocument()
     expect(screen.getByText('ffmpeg Binary')).toBeInTheDocument()
   })
 

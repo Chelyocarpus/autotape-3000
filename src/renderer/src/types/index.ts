@@ -27,6 +27,8 @@ export interface UserSettings {
   duplicateAction: DuplicateAction
   sessionFilter: string
   minSaveSeconds: number
+  /** Seconds paused before an in-progress recording is stopped and discarded. 0 disables. */
+  pauseDiscardSeconds: number
   /** Explicit path to the ffmpeg binary. Empty string = auto-detect. */
   ffmpegPath: string
 }

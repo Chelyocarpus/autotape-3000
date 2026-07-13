@@ -29,10 +29,6 @@ function formatOffset(sec: number, sign: '+' | '-'): string {
   return `${sign}${Math.abs(sec).toFixed(3)}s`
 }
 
-function buildAudioUrl(filePath: string): string {
-  return `autotape-audio://file?path=${encodeURIComponent(filePath)}`
-}
-
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
 }
@@ -200,12 +196,19 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     setIsLoading(true)
     setLoadError(null)
 
-    fetch(buildAudioUrl(entry.filePath), { signal: abortCtrl.signal })
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
+    // Read via IPC rather than fetch() against a custom protocol — Chromium's
+    // fetch() CORS allowlist for cross-scheme requests only covers chrome/
+    // chrome-extension/chrome-untrusted/data/http/https, so a custom scheme is
+    // never fetchable from the renderer no matter how it's registered. IPC
+    // isn't subject to that restriction.
+    window.electronAPI.readAudioFile(entry.filePath)
+      .then((bytes) => {
+        if (abortCtrl.signal.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'))
         const ctx = new AudioContext()
         audioCtxRef.current = ctx
-        return ctx.decodeAudioData(buf)
+        // .slice() copies to a fresh, zero-offset buffer — the Uint8Array that
+        // crosses the IPC boundary isn't guaranteed to own its whole .buffer.
+        return ctx.decodeAudioData(bytes.slice().buffer)
       })
       .then((decoded) => {
         if (abortCtrl.signal.aborted) return

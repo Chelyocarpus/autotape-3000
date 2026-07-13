@@ -1,6 +1,6 @@
 {
   "name": "autotape3000",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Record system audio per-track using GSMTC",
   "main": "./out/main/index.js",
   "author": "autotape3000",
@@ -10,8 +10,9 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:native": "node scripts/build-native.mjs",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "pnpm run build && electron-builder --win",
+    "build:win": "pnpm run build:native && pnpm run build && electron-builder --win",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "test": "vitest run",

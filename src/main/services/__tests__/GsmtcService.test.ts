@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isLikelyNextTrack, tracksEqual, type GsmtcTrack } from '../GsmtcService'
+import { getLivePositionMs, isLikelyNextTrack, tracksEqual, type GsmtcTrack } from '../GsmtcService'
 
 function track(overrides: Partial<GsmtcTrack> = {}): GsmtcTrack {
   return {
@@ -75,5 +75,27 @@ describe('isLikelyNextTrack', () => {
     const prev = track({ positionMs: 60_000 })
     const next = track({ positionMs: 58_000 })
     expect(isLikelyNextTrack(prev, next)).toBe(false)
+  })
+})
+
+describe('getLivePositionMs', () => {
+  it('extrapolates elapsed time since the source last pushed a position update', () => {
+    const t = track({ positionMs: 1_000, positionUpdatedAtMs: 5_000, isPlaying: true })
+    expect(getLivePositionMs(t, 5_300)).toBe(1_300)
+  })
+
+  it('falls back to the raw position when positionUpdatedAtMs is missing', () => {
+    const t = track({ positionMs: 1_000, positionUpdatedAtMs: undefined, isPlaying: true })
+    expect(getLivePositionMs(t, 5_300)).toBe(1_000)
+  })
+
+  it('does not extrapolate when paused', () => {
+    const t = track({ positionMs: 1_000, positionUpdatedAtMs: 5_000, isPlaying: false })
+    expect(getLivePositionMs(t, 5_300)).toBe(1_000)
+  })
+
+  it('does not go backwards when nowMs is before the last update (clock jitter)', () => {
+    const t = track({ positionMs: 1_000, positionUpdatedAtMs: 5_000, isPlaying: true })
+    expect(getLivePositionMs(t, 4_900)).toBe(1_000)
   })
 })

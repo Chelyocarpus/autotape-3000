@@ -1,6 +1,10 @@
 import { EventEmitter } from 'events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('electron', () => ({
+  app: { isPackaged: false }
+}))
+
 vi.mock('../FfmpegResolver', () => ({
   getFfmpegPath: () => 'C:\\fake\\ffmpeg.exe'
 }))
@@ -21,13 +25,15 @@ vi.mock('fs', () => {
 
 import { renameSync } from 'fs'
 import { AudioRecorder } from '../AudioRecorder'
+import { APP_LOOPBACK_DEVICE_ID } from '../AudioDevices'
 
 type ExecFileCallback = (err: Error | null, stdout?: string, stderr?: string) => void
 
 /** Fake ChildProcess covering exactly what AudioRecorder.start()/stop() touch. */
 class FakeChildProcess extends EventEmitter {
   stderr = new EventEmitter()
-  stdin = { write: vi.fn(), end: vi.fn() }
+  stdout = { pipe: vi.fn(), on: vi.fn() }
+  stdin = { write: vi.fn(), end: vi.fn(), on: vi.fn() }
   kill = vi.fn()
 }
 
@@ -45,6 +51,81 @@ describe('AudioRecorder capture args', () => {
     const captureArgs = spawnMock.mock.calls[0][1] as string[]
     expect(captureArgs).not.toContain('-ar')
     expect(captureArgs).not.toContain('44100')
+  })
+})
+
+describe('AudioRecorder loopback capture', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => new FakeChildProcess())
+  })
+
+  it('spawns the native helper with --pid and feeds its stdout into ffmpeg as raw f32le PCM', () => {
+    const recorder = new AudioRecorder()
+    recorder.start(APP_LOOPBACK_DEVICE_ID, 4242)
+
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+
+    const [helperBinary, helperArgs] = spawnMock.mock.calls[0] as [string, string[]]
+    expect(helperArgs).toEqual(['--pid', '4242'])
+    expect(helperBinary).toMatch(/loopback-capture\.exe$/)
+
+    const ffmpegArgs = spawnMock.mock.calls[1][1] as string[]
+    expect(ffmpegArgs).toEqual(expect.arrayContaining(['-f', 'f32le', '-i', 'pipe:0']))
+    expect(ffmpegArgs).not.toContain('dshow')
+
+    const helperInstance = spawnMock.mock.results[0].value as FakeChildProcess
+    const ffmpegInstance = spawnMock.mock.results[1].value as FakeChildProcess
+    expect(helperInstance.stdout.pipe).toHaveBeenCalledWith(ffmpegInstance.stdin)
+  })
+
+  it('throws synchronously instead of spawning anything when no PID has been resolved', () => {
+    const recorder = new AudioRecorder()
+    expect(() => recorder.start(APP_LOOPBACK_DEVICE_ID, null)).toThrow(/process ID/)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('kills the helper immediately on stop, independent of the fast/graceful ffmpeg timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const recorder = new AudioRecorder()
+      recorder.start(APP_LOOPBACK_DEVICE_ID, 4242)
+      const helperInstance = spawnMock.mock.results[0].value as FakeChildProcess
+
+      const stopPromise = recorder.stop()
+      expect(helperInstance.kill).toHaveBeenCalledTimes(1)
+
+      // No 'close' event fires from the fake ffmpeg process — let the graceful
+      // SIGKILL fallback timer settle the promise instead of hanging the test.
+      await vi.advanceTimersByTimeAsync(500)
+      await stopPromise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not write to ffmpeg stdin on a graceful stop — it is a raw PCM pipe, not a control channel', async () => {
+    // Regression test: stdin here is fed via helper.stdout.pipe(ffmpeg.stdin), which
+    // already auto-ends the destination when the helper's stdout ends. Also calling
+    // .write('q')/.end() manually (the dshow-only technique) corrupts the raw PCM
+    // stream with a stray byte and races the pipe's own auto-end(), which throws
+    // ERR_STREAM_WRITE_AFTER_END if trailing helper output arrives after our
+    // manual end() already closed the stream.
+    vi.useFakeTimers()
+    try {
+      const recorder = new AudioRecorder()
+      recorder.start(APP_LOOPBACK_DEVICE_ID, 4242)
+      const ffmpegInstance = spawnMock.mock.results[1].value as FakeChildProcess
+
+      const stopPromise = recorder.stop()
+      expect(ffmpegInstance.stdin.write).not.toHaveBeenCalled()
+      expect(ffmpegInstance.stdin.end).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(500)
+      await stopPromise
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

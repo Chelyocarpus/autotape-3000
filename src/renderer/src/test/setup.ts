@@ -34,9 +34,11 @@ function makeElectronApiMock(): Window['electronAPI'] {
     listSessions: () => Promise.resolve([]),
 
     startRecording: () => Promise.resolve(),
-    stopRecording: () => Promise.resolve(),
+    stopRecording: () => Promise.resolve('stopped' as const),
     onRecordingStarted: () => () => {},
     onRecordingFinished: () => () => {},
+    onRecordingStopped: () => () => {},
+    onRecordingIdle: () => () => {},
     onSilenceWarning: () => () => {},
     onAudioDetected: () => () => {},
 
@@ -48,11 +50,13 @@ function makeElectronApiMock(): Window['electronAPI'] {
       duplicateAction: 'increment',
       sessionFilter: 'auto',
       minSaveSeconds: 0,
+      pauseDiscardSeconds: 60,
       ffmpegPath: ''
     }),
     saveSettings: () => Promise.resolve(),
 
     getAudioDevices: () => Promise.resolve([]),
+    readAudioFile: () => Promise.resolve(new Uint8Array(8)),
 
     detectFfmpeg: () => Promise.resolve(''),
     getFfmpegPath: () => Promise.resolve(''),

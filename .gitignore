@@ -12,6 +12,11 @@ electron.vite.config.*.mjs
 # Bundled ffmpeg binary (large binary; fetched by @ffmpeg-installer at install time)
 resources/ffmpeg/
 
+# Native loopback-capture helper: Rust build artifacts and the compiled binary
+# copied into resources/ by `pnpm build:native` (see native/loopback-capture/)
+native/loopback-capture/target/
+resources/native/
+
 # Logs
 *.log
 *.log.*

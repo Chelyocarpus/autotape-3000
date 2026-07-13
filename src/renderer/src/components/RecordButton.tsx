@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Square, Play } from 'lucide-react'
+import { Square, Play, Clock } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import type { GsmtcTrack } from '../types'
 
 const IDLE_TAGLINES = [
@@ -18,6 +19,7 @@ const RECORDING_STATUSES = [
 
 interface RecordButtonProps {
   isRecording: boolean
+  stopPending?: boolean
   currentTrack: GsmtcTrack | null
   elapsed: number
   trackCount: number
@@ -126,6 +128,7 @@ function VinylDisc({ isRecording, tron }: { isRecording: boolean; tron: boolean 
 
 export function RecordButton({
   isRecording,
+  stopPending = false,
   currentTrack,
   elapsed,
   trackCount,
@@ -161,7 +164,13 @@ export function RecordButton({
               : 'focus-visible:ring-[var(--color-amber-500)] hover:scale-[1.08] hover:shadow-[0_0_40px_color-mix(in_srgb,var(--color-amber-500)_50%,transparent)] active:scale-[1.02]'
           )}
           onClick={isRecording ? onStop : onStart}
-          aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+          aria-label={
+            isRecording
+              ? stopPending
+                ? 'Stop recording now (already stopping after this track)'
+                : 'Stop recording'
+              : 'Start recording'
+          }
         >
           <VinylDisc isRecording={isRecording} tron={tron} />
           {/* Icon floats over center label — stop when recording, play when idle */}
@@ -171,6 +180,17 @@ export function RecordButton({
               : <Play className="w-5 h-5 fill-white text-white drop-shadow translate-x-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200" />
             }
           </div>
+          {/* Pending-stop badge — deferred until the current track ends; click again to force it */}
+          {stopPending && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="absolute -top-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 ring-2 ring-zinc-900 shadow-md animate-pulse">
+                  <Clock className="w-4 h-4 text-zinc-950" strokeWidth={2.5} />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top">Stopping after this track — click again to stop now</TooltipContent>
+            </Tooltip>
+          )}
         </button>
       </div>
 
@@ -181,10 +201,22 @@ export function RecordButton({
             <p className="text-2xl font-mono font-light text-zinc-100 tabular-nums tracking-wider">
               {formatElapsed(elapsed)}
             </p>
-            <p className="text-[11px] text-[var(--rec-500)]/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--rec-500)] animate-pulse inline-block" />
-              {RECORDING_STATUSES[statusIndex]}
-            </p>
+            {stopPending ? (
+              <p className="text-[11px] text-amber-400/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
+                <Clock className="w-3 h-3" />
+                Stopping soon
+              </p>
+            ) : currentTrack ? (
+              <p className="text-[11px] text-[var(--rec-500)]/90 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--rec-500)] animate-pulse inline-block" />
+                {RECORDING_STATUSES[statusIndex]}
+              </p>
+            ) : (
+              <p className="text-[11px] text-amber-400/80 mt-1 flex items-center gap-1.5 justify-center uppercase tracking-widest">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+                Waiting for music
+              </p>
+            )}
           </>
         ) : (
           <>

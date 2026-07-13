@@ -21,9 +21,15 @@ declare global {
 
       // Recording control
       startRecording: () => Promise<void>
-      stopRecording: () => Promise<void>
+      // 'pending' means the stop was deferred until the current track ends —
+      // calling stopRecording() again while pending forces an immediate stop.
+      stopRecording: () => Promise<'stopped' | 'pending'>
       onRecordingStarted: (cb: (track: GsmtcTrack) => void) => () => void
       onRecordingFinished: (cb: (entry: RecordingEntry) => void) => () => void
+      onRecordingStopped: (cb: () => void) => () => void
+      // Session is still active, but nothing is currently being captured — e.g.
+      // a recording was just dropped (long pause) with no new track to replace it.
+      onRecordingIdle: (cb: () => void) => () => void
       onSilenceWarning: (cb: () => void) => () => void
       onAudioDetected: (cb: () => void) => () => void
 
@@ -33,6 +39,7 @@ declare global {
 
       // Audio devices
       getAudioDevices: () => Promise<AudioDevice[]>
+      readAudioFile: (filePath: string) => Promise<Uint8Array>
 
       // ffmpeg binary path
       detectFfmpeg: () => Promise<string>
@@ -93,6 +100,7 @@ export function useGsmtcTrack(): GsmtcTrack {
 /** Recording state */
 export function useRecording(onEntry: (e: RecordingEntry) => void) {
   const [isRecording, setIsRecording] = useState(false)
+  const [stopPending, setStopPending] = useState(false)
   const [currentTrack, setCurrentTrack] = useState<GsmtcTrack | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [silenceWarning, setSilenceWarning] = useState(false)
@@ -101,17 +109,19 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
   const start = useCallback(async () => {
     await window.electronAPI.startRecording()
     setIsRecording(true)
+    setStopPending(false)
     setSilenceWarning(false)
     startTimeRef.current = Date.now()
     setElapsed(0)
   }, [])
 
+  // First call defers the stop until the current track ends; a second call
+  // while already pending forces an immediate stop. Either way, isRecording
+  // only flips off once the main process confirms via onRecordingStopped —
+  // that's what actually happened, not what we asked for.
   const stop = useCallback(async () => {
-    await window.electronAPI.stopRecording()
-    setIsRecording(false)
-    setCurrentTrack(null)
-    setElapsed(0)
-    setSilenceWarning(false)
+    const result = await window.electronAPI.stopRecording()
+    if (result === 'pending') setStopPending(true)
   }, [])
 
   useEffect(() => {
@@ -124,24 +134,43 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
     const unsubFinished = window.electronAPI.onRecordingFinished((entry) => {
       onEntry(entry)
     })
+    const unsubStopped = window.electronAPI.onRecordingStopped(() => {
+      setIsRecording(false)
+      setStopPending(false)
+      setCurrentTrack(null)
+      setElapsed(0)
+      setSilenceWarning(false)
+    })
+    // Session is still on, but nothing is being captured right now (e.g. a
+    // recording was just dropped after a long pause) — clear the stale track
+    // and timer instead of leaving them frozen on whatever was captured last.
+    const unsubIdle = window.electronAPI.onRecordingIdle(() => {
+      setCurrentTrack(null)
+      setElapsed(0)
+      setSilenceWarning(false)
+    })
     const unsubSilence = window.electronAPI.onSilenceWarning(() => setSilenceWarning(true))
     const unsubAudio = window.electronAPI.onAudioDetected(() => setSilenceWarning(false))
     return () => {
       unsubStarted()
       unsubFinished()
+      unsubStopped()
+      unsubIdle()
       unsubSilence()
       unsubAudio()
     }
   }, [onEntry])
 
-  // Elapsed timer — computed from wall-clock time to survive window throttling
+  // Elapsed timer — computed from wall-clock time to survive window throttling.
+  // Only ticks while a track is actually being captured, not just while the
+  // session is armed and waiting (see onRecordingIdle above).
   useEffect(() => {
-    if (!isRecording) return
+    if (!isRecording || !currentTrack) return
     const id = setInterval(() => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000)
     return () => clearInterval(id)
-  }, [isRecording])
+  }, [isRecording, currentTrack])
 
-  return { isRecording, currentTrack, elapsed, silenceWarning, start, stop }
+  return { isRecording, stopPending, currentTrack, elapsed, silenceWarning, start, stop }
 }
 
 /** Read the running app's version (from package.json via Electron) */
@@ -153,16 +182,26 @@ export function useAppVersion(): string {
   return version
 }
 
+// SettingsPanel and OnboardingWizard each call useSettings() independently. Without
+// this, saving in one left every other mounted instance holding a stale snapshot
+// until the whole renderer reloaded — e.g. picking a different capture device in a
+// re-opened onboarding wizard didn't show up in Settings until an app restart.
+const settingsListeners = new Set<(s: UserSettings) => void>()
+
 /** Load and save settings */
 export function useSettings() {
   const [settings, setSettings] = useState<UserSettings | null>(null)
 
   useEffect(() => {
     window.electronAPI.getSettings().then(setSettings).catch(() => {})
+    settingsListeners.add(setSettings)
+    return () => {
+      settingsListeners.delete(setSettings)
+    }
   }, [])
 
   const save = useCallback(async (s: UserSettings) => {
-    setSettings(s)
+    for (const listener of settingsListeners) listener(s)
     await window.electronAPI.saveSettings(s)
   }, [])
 
