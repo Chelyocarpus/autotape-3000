@@ -5,6 +5,7 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!native/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{tsconfig*.json,.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
@@ -17,6 +18,11 @@ extraResources:
     filter:
       - 'gsmtc.ps1'
       - 'gsmtc_loop.ps1'
+      - 'resolve-loopback-target.ps1'
+  - from: resources/native/
+    to: native/
+    filter:
+      - 'loopback-capture.exe'
 win:
   executableName: Autotape3000
   target:

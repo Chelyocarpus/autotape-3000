@@ -106,7 +106,7 @@ export function App() {
 
   const [trimEntry, setTrimEntry] = useState<RecordingEntry | null>(null)
 
-  const { isRecording, currentTrack, elapsed, silenceWarning, start, stop } = useRecording(onEntry)
+  const { isRecording, stopPending, currentTrack, elapsed, silenceWarning, start, stop } = useRecording(onEntry)
 
   // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
   const [silenceDismissed, setSilenceDismissed] = useState(false)
@@ -179,6 +179,7 @@ export function App() {
             <div className="shrink min-h-32 overflow-hidden flex flex-col items-center w-full">
               <RecordButton
                 isRecording={isRecording}
+                stopPending={stopPending}
                 currentTrack={currentTrack}
                 elapsed={elapsed}
                 trackCount={entries.filter((e) => e.status === 'ok').length}

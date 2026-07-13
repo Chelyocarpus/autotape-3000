@@ -1,11 +1,25 @@
 import { ChildProcess, execFile, spawn } from 'child_process'
-import { renameSync } from 'fs'
+import { renameSync, realpathSync } from 'fs'
 import { EventEmitter } from 'events'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import { app } from 'electron'
 import { getFfmpegPath } from './FfmpegResolver'
+import { APP_LOOPBACK_DEVICE_ID } from './AudioDevices'
 import { log } from './log'
+
+/** Resolves the bundled WASAPI process-loopback capture helper's executable path. */
+function _resolveLoopbackHelperPath(): string {
+  const raw = app.isPackaged
+    ? join(process.resourcesPath, 'native', 'loopback-capture.exe')
+    : join(__dirname, '..', '..', 'native', 'loopback-capture', 'target', 'release', 'loopback-capture.exe')
+  try {
+    return realpathSync(raw)
+  } catch {
+    return raw
+  }
+}
 
 function runFfmpegAsync(binary: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
@@ -68,30 +82,66 @@ export class AudioRecorder extends EventEmitter {
   }
 
   private _proc: ChildProcess | null = null
+  private _helper: ChildProcess | null = null
   private _tmpPath: string | null = null
   private _running = false
+  private _startedAt = 0
 
   get isRunning(): boolean {
     return this._running
   }
 
   /**
-   * Start recording from the given DirectShow device.
+   * Start recording. For a plain dshow deviceId this captures from that device.
+   * For APP_LOOPBACK_DEVICE_ID, loopbackPid must be the already-resolved target
+   * process ID — capture is then scoped to that process tree via the bundled
+   * WASAPI process-loopback helper instead of a DirectShow device.
    * Returns the temp WAV file path where audio is being written.
    */
-  start(deviceId: string): string {
+  start(deviceId: string, loopbackPid?: number | null): string {
     if (this._running) {
       throw new Error('Recorder already running')
     }
 
     const tmp = join(tmpdir(), `autotape_${randomUUID()}.wav`)
-    this._tmpPath = tmp
-
     const binary = getFfmpegPath()
-    const args = this._buildCaptureArgs(deviceId, tmp)
 
+    let args: string[]
+    if (deviceId === APP_LOOPBACK_DEVICE_ID) {
+      if (typeof loopbackPid !== 'number') {
+        throw new Error('Isolated app capture requires a resolved process ID')
+      }
+      args = this._buildLoopbackFfmpegArgs(tmp)
+      this._helper = this._spawnLoopbackHelper(loopbackPid)
+    } else {
+      args = this._buildCaptureArgs(deviceId, tmp)
+    }
+
+    this._tmpPath = tmp
+    this._startedAt = Date.now()
+    const spawnRequestedAt = this._startedAt
     this._proc = spawn(binary, args, { windowsHide: true })
     this._running = true
+    log(`[AudioRecorder] start: deviceId=${deviceId}${typeof loopbackPid === 'number' ? ` loopbackPid=${loopbackPid}` : ''} wav=${tmp}`)
+    this._proc.once('spawn', () => {
+      log(`[AudioRecorder] ffmpeg spawned after ${Date.now() - spawnRequestedAt}ms`)
+    })
+
+    if (this._helper) {
+      // child.stdin has no default error listener, so an EPIPE-class error here
+      // (e.g. ffmpeg's stdin closing while the helper is still shutting down) would
+      // otherwise be unhandled and crash the process. Teardown races like this are
+      // expected — the proc 'error'/'close' handlers below already cover reporting.
+      this._proc.stdin?.on('error', () => {})
+      this._helper.stdout?.on('error', () => {})
+      this._helper.stdout?.pipe(this._proc.stdin!)
+      this._helper.on('error', (err) => this.emit('error', err))
+      this._helper.on('exit', (code, signal) => {
+        if (code !== 0 && code !== null) {
+          log(`[AudioRecorder] loopback helper exited with code ${code} (signal=${signal})`)
+        }
+      })
+    }
 
     let stderrBuf = ''
     this._proc.stderr?.on('data', (chunk: Buffer) => {
@@ -116,6 +166,11 @@ export class AudioRecorder extends EventEmitter {
 
     this._proc.on('close', (_code) => {
       this._running = false
+      log(`[AudioRecorder] ffmpeg closed after ${Date.now() - this._startedAt}ms total (code=${_code})`)
+      if (this._helper) {
+        this._helper.kill()
+        this._helper = null
+      }
       if (this._tmpPath) {
         this.emit('stopped', this._tmpPath)
       }
@@ -125,6 +180,27 @@ export class AudioRecorder extends EventEmitter {
 
     this.emit('started')
     return tmp
+  }
+
+  private _spawnLoopbackHelper(pid: number): ChildProcess {
+    const helperPath = _resolveLoopbackHelperPath()
+    return spawn(helperPath, ['--pid', String(pid)], { windowsHide: true })
+  }
+
+  private _buildLoopbackFfmpegArgs(outputPath: string): string[] {
+    return [
+      '-y',
+      '-f', 'f32le',
+      '-ar', '48000',
+      '-ac', '2',
+      '-thread_queue_size', '512',
+      '-i', 'pipe:0',
+      '-vn', '-ac', '2',
+      '-af', 'silencedetect=noise=-60dB:d=5',
+      '-fflags', '+nobuffer',
+      '-flush_packets', '1',
+      outputPath
+    ]
   }
 
   private _buildCaptureArgs(deviceId: string, outputPath: string): string[] {
@@ -170,11 +246,14 @@ export class AudioRecorder extends EventEmitter {
 
       const filePath = this._tmpPath!
       const fast = options?.fast === true
+      const stopRequestedAt = Date.now()
+      log(`[AudioRecorder] stop requested (fast=${fast}) after ${stopRequestedAt - this._startedAt}ms recording`)
 
       // Use named handlers so each can remove the other, preventing listener leaks
       // when the promise is settled via the SIGKILL timeout rather than the events.
       const onStopped = (path: string): void => {
         this.removeListener('error', onError)
+        log(`[AudioRecorder] stop resolved after ${Date.now() - stopRequestedAt}ms`)
         resolve(path)
       }
       const onError = (err: Error): void => {
@@ -190,6 +269,15 @@ export class AudioRecorder extends EventEmitter {
         resolve(path)
       }
 
+      // Loopback mode: killing the helper closes its stdout, which EOFs ffmpeg's
+      // stdin pipe and lets ffmpeg finalize the file on its own — same effect as
+      // the 'q'/SIGINT paths below have for a dshow capture.
+      const isLoopback = this._helper !== null
+      if (this._helper) {
+        this._helper.kill()
+        this._helper = null
+      }
+
       // On fast stop (track change), escalate quickly so capture stops almost instantly.
       if (fast) {
         // For split-on-change we prioritize cutting capture latency over graceful tail handling.
@@ -200,6 +288,7 @@ export class AudioRecorder extends EventEmitter {
 
         setTimeout(() => {
           if (this._running && this._proc === procToKill) {
+            log(`[AudioRecorder] fast stop: SIGINT did not close ffmpeg within 120ms — escalating to SIGKILL`)
             this._proc.kill('SIGKILL')
             // Mark as stopped immediately so isRunning is false before resolve() returns.
             // The close event will still fire and clean up _proc/_tmpPath.
@@ -210,8 +299,15 @@ export class AudioRecorder extends EventEmitter {
         return
       }
 
-      // Send 'q' to ffmpeg stdin to stop gracefully and finalize the file
-      if (this._proc.stdin) {
+      if (isLoopback) {
+        // Nothing more to do — killing the helper above already EOFs ffmpeg's stdin
+        // (piped from the helper's stdout), which finalizes the file on its own.
+        // Writing 'q' into that stream here would corrupt the raw PCM data with a
+        // stray byte and, worse, race the pipe's own auto-end() from the helper's
+        // stdout closing, which can throw ERR_STREAM_WRITE_AFTER_END if any trailing
+        // buffered audio from the killed helper arrives after our manual end() did.
+      } else if (this._proc.stdin) {
+        // Send 'q' to ffmpeg stdin to stop gracefully and finalize the file
         this._proc.stdin.write('q')
         this._proc.stdin.end()
       } else {
@@ -222,6 +318,7 @@ export class AudioRecorder extends EventEmitter {
       const procToKillGraceful = this._proc
       setTimeout(() => {
         if (this._running && this._proc === procToKillGraceful) {
+          log(`[AudioRecorder] graceful stop: ffmpeg did not close within 500ms — escalating to SIGKILL`)
           this._proc.kill('SIGKILL')
           this._running = false
           settle(filePath)

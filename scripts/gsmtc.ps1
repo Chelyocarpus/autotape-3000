@@ -53,7 +53,7 @@ try {
     if ($List) {
         Write-Output '[]'
     } else {
-        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"isPlaying":false}'
+        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"positionUpdatedAtMs":0,"isPlaying":false}'
     }
     exit 0
 }
@@ -81,14 +81,17 @@ function Get-TrackFromSession {
     $appId = if ($Session.SourceAppUserModelId) { "$($Session.SourceAppUserModelId)" } else { "" }
 
     $positionMs = 0
+    $positionUpdatedAtMs = 0
     try {
         $timeline = $Session.GetTimelineProperties()
         if ($null -ne $timeline) {
             $positionMs = [int64]$timeline.Position.TotalMilliseconds
             if ($positionMs -lt 0) { $positionMs = 0 }
+            $positionUpdatedAtMs = [int64]$timeline.LastUpdatedTime.ToUnixTimeMilliseconds()
         }
     } catch {
         $positionMs = 0
+        $positionUpdatedAtMs = 0
     }
 
     $artist = if ($props.Artist) { $props.Artist } else { "" }
@@ -222,14 +225,15 @@ function Get-TrackFromSession {
     }
 
     return [PSCustomObject]@{
-        artist       = $artist
-        title        = $title
-        album        = $album
-        albumArtFile = $albumArtFile
-        albumArtMime = $albumArtMime
-        sourceAppId  = $appId
-        positionMs   = $positionMs
-        isPlaying    = $isPlaying
+        artist              = $artist
+        title               = $title
+        album               = $album
+        albumArtFile        = $albumArtFile
+        albumArtMime        = $albumArtMime
+        sourceAppId         = $appId
+        positionMs          = $positionMs
+        positionUpdatedAtMs = $positionUpdatedAtMs
+        isPlaying           = $isPlaying
     }
 }
 
@@ -343,7 +347,7 @@ if ($candidates.Count -eq 0) {
     if ($List) {
         Write-Output '[]'
     } else {
-        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"isPlaying":false}'
+        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"positionUpdatedAtMs":0,"isPlaying":false}'
     }
     exit 0
 }
@@ -379,7 +383,7 @@ if ($requestedSource -ne 'auto') {
     }
 
     if ($filteredCandidates.Count -eq 0) {
-        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"isPlaying":false}'
+        Write-Output '{"artist":"","title":"","album":"","albumArtFile":"","albumArtMime":"","sourceAppId":"","positionMs":0,"positionUpdatedAtMs":0,"isPlaying":false}'
         exit 0
     }
 

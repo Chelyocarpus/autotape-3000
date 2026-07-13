@@ -1,0 +1,19 @@
+[package]
+name = "loopback-capture"
+version = "0.1.0"
+edition = "2021"
+description = "Windows WASAPI process-loopback audio capture helper for Autotape 3000"
+publish = false
+
+[[bin]]
+name = "loopback-capture"
+path = "src/main.rs"
+
+[dependencies]
+wasapi = "0.23"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+opt-level = 2
+lto = true
+strip = true

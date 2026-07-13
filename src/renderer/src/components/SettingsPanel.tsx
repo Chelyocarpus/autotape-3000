@@ -11,6 +11,22 @@ import type { UserSettings } from '../types'
 
 import { ONBOARDING_KEY } from './OnboardingWizard'
 
+// Matches AudioDevices.ts's APP_LOOPBACK_DEVICE_ID — the renderer doesn't import
+// main-process modules, so this sentinel is duplicated here (same pattern used in
+// OnboardingWizard.tsx).
+const ISOLATED_DEVICE_ID = 'app-loopback'
+
+/**
+ * GSMTC's sourceAppId isn't always a recognizable app name. Browsers and CEF-based
+ * apps (e.g. Spotify's current desktop client) often register their media session
+ * under an opaque, per-install generated id — a bare hex hash, or "Chromium.<hash>"
+ * — instead of the app's actual name. Showing that raw id in the source picker
+ * reads as broken/unrecognized; showing just the track metadata instead is clearer.
+ */
+function isOpaqueSourceId(id: string): boolean {
+  return /^[0-9a-f]{8,}$/i.test(id) || /^chromium\.[0-9a-z]{8,}$/i.test(id)
+}
+
 export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
   const { settings, save } = useSettings()
   const devices = useAudioDevices()
@@ -19,13 +35,19 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
   const appVersion = useAppVersion()
   const [local, setLocal] = useState<UserSettings | null>(null)
 
+  // Re-sync whenever settings changes to a value this panel didn't itself just save —
+  // e.g. the onboarding wizard persisting a different device while this panel stays
+  // mounted underneath it. update() sets both local and settings to the same object
+  // in the same tick, so this doesn't clobber in-progress edits made here.
   useEffect(() => {
-    if (settings && !local) setLocal(settings)
+    if (settings && settings !== local) setLocal(settings)
   }, [settings, local])
 
   if (!local) {
     return <div className="text-zinc-500 text-sm p-4">Loading settings…</div>
   }
+
+  const isolatedSupported = devices.some((d) => d.id === ISOLATED_DEVICE_ID)
 
   function update(patch: Partial<UserSettings>) {
     const next = { ...local!, ...patch }
@@ -105,7 +127,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
 
       {/* Source stream */}
       <div className="flex flex-col gap-1.5">
-        <Label className="flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-zinc-500" />Media Source (for track detection &amp; artwork)</Label>
+        <Label className="flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-zinc-500" />Media Source</Label>
         <Select
           value={local.sessionFilter}
           onValueChange={(v) => update({ sessionFilter: v })}
@@ -118,16 +140,51 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
             {sourceSessions.map((s) => {
               const state = s.isPlaying ? 'Playing' : 'Idle'
               const art = s.hasArtwork ? 'Art' : 'No art'
-              const title = [s.artist, s.title].filter(Boolean).join(' — ') || s.sourceAppId
+              const meta = [s.artist, s.title].filter(Boolean).join(' — ')
+              const idLabel = isOpaqueSourceId(s.sourceAppId) ? null : s.sourceAppId
+              const label = [idLabel, meta].filter(Boolean).join(' — ') || s.sourceAppId
               return (
                 <SelectItem key={s.sourceAppId} value={s.sourceAppId}>
-                  {`${title} (${state}, ${art})`}
+                  {`${label} (${state}, ${art})`}
                 </SelectItem>
               )
             })}
           </SelectContent>
         </Select>
-        <p className="text-xs text-zinc-500">Pick a specific stream/app, or keep Auto.</p>
+        <p className="text-xs text-zinc-500">
+          Pick a specific app, or leave it on Auto. When Audio Capture Method below is set to
+          Isolated, this is also the app you record.
+        </p>
+      </div>
+
+      <Separator />
+
+      {/* Audio capture method */}
+      <div className="flex flex-col gap-1.5">
+        <Label className="flex items-center gap-1.5"><Headphones className="w-3.5 h-3.5 text-zinc-500" />Audio Capture Method</Label>
+        <Select
+          value={local.deviceId}
+          onValueChange={(v) => update({ deviceId: v })}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select device…" />
+          </SelectTrigger>
+          <SelectContent>
+            {devices.length === 0 && (
+              <SelectItem value="default">Default Audio Output</SelectItem>
+            )}
+            {devices.map((d) => (
+              <SelectItem key={d.id} value={d.id}>
+                {d.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-zinc-500">
+          {isolatedSupported
+            ? 'Isolated records only the app selected as Media Source above, automatically.'
+            : "Pick a DirectShow device to capture from, such as a virtual audio cable if you want to isolate one app's audio."}
+        </p>
       </div>
 
       <Separator />
@@ -151,28 +208,23 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
 
       <Separator />
 
-      {/* Audio device */}
+      {/* Pause discard timeout */}
       <div className="flex flex-col gap-1.5">
-        <Label className="flex items-center gap-1.5"><Headphones className="w-3.5 h-3.5 text-zinc-500" />Audio Device (WASAPI)</Label>
-        <Select
-          value={local.deviceId}
-          onValueChange={(v) => update({ deviceId: v })}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select device…" />
-          </SelectTrigger>
-          <SelectContent>
-            {devices.length === 0 && (
-              <SelectItem value="default">Default Audio Output</SelectItem>
-            )}
-            {devices.map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-zinc-500">Select a virtual audio cable for isolated capture</p>
+        <Label className="flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-zinc-500" />Discard After Paused (seconds)</Label>
+        <Input
+          type="number"
+          min={0}
+          step={1}
+          value={local.pauseDiscardSeconds}
+          onChange={(e) => {
+            const parsed = Number.parseInt(e.target.value, 10)
+            const pauseDiscardSeconds = Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+            update({ pauseDiscardSeconds })
+          }}
+        />
+        <p className="text-xs text-zinc-500">
+          If playback stays paused this long, the in-progress recording is stopped and discarded. Set to 0 to never auto-discard.
+        </p>
       </div>
 
       <Separator />
@@ -227,7 +279,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
         </div>
         <p className="text-xs text-zinc-500 select-text">
           {local.ffmpegPath
-            ? 'Custom path — clear the field to auto-detect.'
+            ? 'Custom path. Clear it to auto-detect.'
             : resolvedPath
               ? `Auto-detected: ${resolvedPath}`
               : 'Leave blank to auto-detect (bundled, then system PATH).'}
@@ -253,7 +305,7 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
         >
           Open setup wizard
         </Button>
-        <p className="text-xs text-zinc-500">Re-run the first-time setup to reconfigure FFmpeg, audio device, or save location.</p>
+        <p className="text-xs text-zinc-500">Re-run the first-time setup to reconfigure ffmpeg, audio capture, or save location.</p>
       </div>
 
       <Separator />

@@ -1,8 +1,10 @@
 import { EventEmitter } from 'events'
 import { renameSync, unlinkSync } from 'fs'
 import { powerSaveBlocker } from 'electron'
-import type { GsmtcService, GsmtcTrack } from './GsmtcService'
+import { getLivePositionMs, type GsmtcService, type GsmtcTrack } from './GsmtcService'
 import { AudioRecorder } from './AudioRecorder'
+import { APP_LOOPBACK_DEVICE_ID } from './AudioDevices'
+import { resolveAumidToPid } from './ProcessResolver'
 import { resolveOutputPath, swapExtension, type DuplicateAction, type MediaFormat } from './FileManager'
 import { writeId3Tags } from './MetadataTagger'
 import { getTrimPreset } from './TrimPresetsStore'
@@ -16,6 +18,8 @@ export interface TrackSplitterSettings {
   duplicateAction: DuplicateAction
   sessionFilter: string
   minSaveSeconds: number
+  /** Seconds paused before an in-progress recording is stopped and discarded. 0 disables. */
+  pauseDiscardSeconds: number
 }
 
 export interface RecordingEntry {
@@ -35,17 +39,22 @@ export declare interface TrackSplitter {
   on(event: 'recordingStarted', listener: (track: GsmtcTrack) => void): this
   on(event: 'recordingFinished', listener: (entry: RecordingEntry) => void): this
   on(event: 'recordingTrackUpdated', listener: (track: GsmtcTrack) => void): this
+  on(event: 'recordingIdle', listener: () => void): this
   on(event: 'error', listener: (err: Error) => void): this
   on(event: 'silenceWarning', listener: () => void): this
   on(event: 'audioDetected', listener: () => void): this
+  on(event: 'stopped', listener: () => void): this
 }
 
 export class TrackSplitter extends EventEmitter {
   private static readonly DEFAULT_MIN_SAVE_SECONDS = 0
+  /** Default pause-discard grace period, used when settings don't specify one. */
+  private static readonly DEFAULT_PAUSE_DISCARD_SECONDS = 60
   /** Extra seconds to keep at the start of a warm-promoted recording as a safety buffer. */
   private static readonly WARM_PAD_SEC = 0.1
   /** resolveOutputPath() only returns null when duplicateAction is 'skip' and the file already exists. */
   private static readonly DUPLICATE_SKIP_REASON = 'A file with this name already exists (duplicate action: skip)'
+  private static readonly PAUSE_DISCARD_REASON = 'Discarded — playback paused too long'
 
   private _recorder = new AudioRecorder()
   private _settings: TrackSplitterSettings | null = null
@@ -54,6 +63,11 @@ export class TrackSplitter extends EventEmitter {
   private _recordingStartedAt = 0
   private _stopInFlight: Promise<void> | null = null
   private _pendingMetadataUpdate = false
+  // Armed by requestStop() when a stop is requested mid-song — resolved (actually
+  // stopping) on the next track boundary or pause, or immediately by a second call.
+  private _stopPending = false
+  // Fires _stopRecording({ discard: true }) if playback stays paused too long.
+  private _pauseDiscardTimer: ReturnType<typeof setTimeout> | null = null
 
   // Pre-warmed recorder: always-running ffmpeg that can be promoted instantly
   // on a track change, eliminating the process spawn delay.
@@ -65,6 +79,16 @@ export class TrackSplitter extends EventEmitter {
   // Pending restart timer for the warm recorder — prevents tight restart loops on ffmpeg exit.
   private _warmRestartTimer: ReturnType<typeof setTimeout> | null = null
 
+  // Cache for the isolated-app-capture PID resolution: resolving an AUMID to a PID
+  // is an async PowerShell round-trip, so it's kicked off eagerly on trackChanged/
+  // playStateChanged and read synchronously (cache-or-null) at each start() call —
+  // mirrors AudioRecorder's own dshow-device probe-and-cache pattern. Keyed by
+  // sourceAppId (not a single last-seen value) because GSMTC's 'auto' source
+  // selection can flip between two apps in quick succession — a single-entry
+  // cache would miss on every flip and re-spawn PowerShell each time.
+  private _loopbackPidCache = new Map<string, number | null>()
+  private _loopbackPidPromises = new Map<string, Promise<number | null>>()
+
   constructor(private readonly _gsmtc: GsmtcService) {
     super()
     this._wireRecorderToSplitter(this._recorder)
@@ -73,7 +97,14 @@ export class TrackSplitter extends EventEmitter {
   /** Wire active-recorder events (error, silence) to this splitter. */
   private _wireRecorderToSplitter(r: AudioRecorder): void {
     r.on('error', (err) => this.emit('error', err))
-    r.on('silence-warning', () => this.emit('silenceWarning'))
+    r.on('silence-warning', () => {
+      // Playback is paused — silence is expected, not a capture problem. The
+      // recorder keeps running through a pause (see _onPlayStateChanged), so
+      // ffmpeg's silencedetect fires right on schedule; don't alarm the user
+      // over something they already know.
+      if (!this._gsmtc.currentTrack.isPlaying) return
+      this.emit('silenceWarning')
+    })
     r.on('audio-detected', () => this.emit('audioDetected'))
   }
 
@@ -83,10 +114,11 @@ export class TrackSplitter extends EventEmitter {
   startListening(settings: TrackSplitterSettings): void {
     this._settings = settings
     this._active = true
+    this._stopPending = false
 
     const currentTrack = this._gsmtc.currentTrack
     if (this._matchesSelectedSource(currentTrack) && currentTrack.isPlaying && currentTrack.title) {
-      this._startRecording(currentTrack)
+      void this._startRecording(currentTrack)
       // The loop-based currentTrack has no artwork — fetch it asynchronously.
       this._gsmtc.fetchArtworkForCurrentTrack()
     }
@@ -97,13 +129,14 @@ export class TrackSplitter extends EventEmitter {
     this._gsmtc.on('artworkUpdated', this._onArtworkUpdated)
 
     // Pre-warm a recorder so it's ready to promote on the next track change.
-    this._startWarmRecorder()
+    void this._startWarmRecorder()
   }
 
   /**
    * Stop recording and remove event listeners.
    */
   async stopListening(): Promise<void> {
+    this._stopPending = false
     this._active = false
     this._gsmtc.off('trackChanged', this._onTrackChanged)
     this._gsmtc.off('trackMetadataUpdated', this._onTrackMetadataUpdated)
@@ -111,6 +144,32 @@ export class TrackSplitter extends EventEmitter {
     this._gsmtc.off('artworkUpdated', this._onArtworkUpdated)
     this._killWarmRecorder()
     await this._stopRecording()
+    this.emit('stopped')
+  }
+
+  /**
+   * Request a stop. If the current track is still playing, defers the actual
+   * stop until it ends (next track change or pause) — returns 'pending'. A
+   * second call while a stop is already pending forces an immediate stop.
+   */
+  async requestStop(): Promise<'stopped' | 'pending'> {
+    if (!this._active) return 'stopped'
+    if (this._stopPending) {
+      log('[Splitter] requestStop: second request — forcing immediate stop')
+      this._stopPending = false
+      await this.stopListening()
+      return 'stopped'
+    }
+    // _currentTrack.isPlaying is a stale snapshot from when the recording started —
+    // pausing doesn't update it (the recorder keeps running through a pause; see
+    // _onPlayStateChanged). Check GSMTC's live state instead.
+    if (this._recorder.isRunning && this._gsmtc.currentTrack.isPlaying) {
+      this._stopPending = true
+      log('[Splitter] requestStop: deferring — will stop when the current track ends')
+      return 'pending'
+    }
+    await this.stopListening()
+    return 'stopped'
   }
 
   updateSettings(settings: Partial<TrackSplitterSettings>): void {
@@ -131,10 +190,16 @@ export class TrackSplitter extends EventEmitter {
     newTrack: GsmtcTrack
   ): void => {
     if (!this._active) return
+    this._cancelPauseDiscard()
+
     // Capture exact event timestamp — this is when position 0:00 of the new track
     // was reported, which is the hard cut point for the outgoing recording.
     const trackChangedAt = Date.now()
+    // GSMTC's positionMs is a snapshot the source app pushed at its own pace, not at
+    // trackChangedAt — extrapolate to what the position actually is right now.
+    const livePositionMs = getLivePositionMs(newTrack, trackChangedAt)
     log(`[Splitter] trackChanged → title="${newTrack.title}" isPlaying=${newTrack.isPlaying} source="${newTrack.sourceAppId}" recorderRunning=${this._recorder.isRunning}`)
+    this._ensureLoopbackPidFor(newTrack.sourceAppId ?? '')
 
     // Sentinel recording is already capturing and the real title just arrived via
     // a second trackChanged (instead of trackMetadataUpdated). Apply in-place to
@@ -159,6 +224,16 @@ export class TrackSplitter extends EventEmitter {
       log(`[Splitter] trackChanged: same song identity — updating metadata in-place for "${newTrack.title}"`)
       this._currentTrack = newTrack
       this.emit('recordingTrackUpdated', newTrack)
+      return
+    }
+
+    // A stop was requested mid-song — this track boundary is the natural
+    // completion point. Finalize the just-finished track and stop for real,
+    // instead of starting a new recording for the incoming track.
+    if (this._stopPending) {
+      log('[Splitter] trackChanged while stop pending — track finished, stopping now')
+      this._stopPending = false
+      void this.stopListening()
       return
     }
 
@@ -189,7 +264,7 @@ export class TrackSplitter extends EventEmitter {
       if (warm?.isRunning) {
         // Promote warm recorder as sentinel; trimSec computed using reported position
         // so we keep any new-song audio already buffered in the warm file.
-        const positionSec = (newTrack.positionMs ?? 0) / 1000
+        const positionSec = livePositionMs / 1000
         this._recorder = warm
         this._wireRecorderToSplitter(this._recorder)
         this._recordingStartedAt = warmStartedAt
@@ -198,15 +273,15 @@ export class TrackSplitter extends EventEmitter {
         this._currentTrack = newTrack
         log(`[Splitter] warm recorder promoted as sentinel (pre-roll=${(this._trimSec * 1000).toFixed(0)}ms, position=${(positionSec * 1000).toFixed(0)}ms)`)
         this._acquirePowerSaveBlocker()
-        this._startWarmRecorder()
+        void this._startWarmRecorder()
       } else {
-        this._startRecordingImmediate(newTrack)
+        void this._startRecordingImmediate(newTrack)
       }
     } else if (newTrack.isPlaying && newTrack.title) {
       if (warm?.isRunning) {
         // Subtract the new track's current position so we keep new-song audio
         // that was already captured in the warm file before detection.
-        const positionSec = (newTrack.positionMs ?? 0) / 1000
+        const positionSec = livePositionMs / 1000
         const trimSec = Math.max(0, (Date.now() - warmStartedAt) / 1000 - positionSec - TrackSplitter.WARM_PAD_SEC)
         log(`[Splitter] warm recorder promoted for "${newTrack.title}" (pre-roll=${(trimSec * 1000).toFixed(0)}ms, position=${(positionSec * 1000).toFixed(0)}ms)`)
         this._recorder = warm
@@ -216,10 +291,10 @@ export class TrackSplitter extends EventEmitter {
         this._currentTrack = newTrack
         this.emit('recordingStarted', newTrack)
         this._acquirePowerSaveBlocker()
-        this._startWarmRecorder()
+        void this._startWarmRecorder()
       } else {
         log(`[Splitter] starting recording for "${newTrack.title}" (no warm recorder)`)
-        this._startRecording(newTrack)
+        void this._startRecording(newTrack)
       }
     } else {
       log(`[Splitter] not starting: isPlaying=${newTrack.isPlaying} title="${newTrack.title}"`)
@@ -231,17 +306,24 @@ export class TrackSplitter extends EventEmitter {
     // buffer before closing the file — prevents the tail of the song being cut off.
     // Since the new recording is already running via the warm recorder, both
     // ffmpeg processes can safely overlap on WASAPI loopback simultaneously.
-    // Back-calculate the true audio switch moment: if GSMTC fires with positionMs=200,
-    // the new song's audio was already playing for 200ms before we received the event.
+    // Back-calculate the true audio switch moment: if the new track's live position is
+    // 200ms, its audio was already playing for 200ms before we received the event.
     // Subtract that offset so the outgoing recording is cut at the real crossover point,
     // preventing any of the next song's audio from bleeding into the previous song's file.
-    const actualSwitchAt = trackChangedAt - (newTrack.positionMs ?? 0)
+    const actualSwitchAt = trackChangedAt - livePositionMs
     void this._stopAndFinalizeDetached(outgoingRecorder, outgoingTrack, outgoingStartedAt, {
       dropIfShortOnTrackChange: true,
       fastStop: false,
       trimSec: outgoingTrimSec,
       stopAt: actualSwitchAt
     })
+
+    // No replacement recording was started above (filtered source, no title, or
+    // paused) — tell listeners nothing is currently being captured, so the
+    // renderer doesn't keep showing the outgoing track/timer.
+    if (!this._currentTrack) {
+      this.emit('recordingIdle')
+    }
   }
 
   private _onArtworkUpdated = (track: GsmtcTrack): void => {
@@ -262,27 +344,65 @@ export class TrackSplitter extends EventEmitter {
     log(`[Splitter] playStateChanged → ${isPlaying} recorderRunning=${this._recorder.isRunning}`)
 
     const t = this._gsmtc.currentTrack
+    this._ensureLoopbackPidFor(t.sourceAppId ?? '')
+
+    // A stop was requested mid-song — pausing means playback is no longer
+    // "still running", so resolve the pending stop now instead of waiting.
+    if (this._stopPending && !isPlaying) {
+      log('[Splitter] playStateChanged: stop pending resolved by pause — stopping now')
+      this._stopPending = false
+      this._cancelPauseDiscard()
+      await this.stopListening()
+      return
+    }
+
     if (!this._matchesSelectedSource(t)) {
       log('[Splitter] playStateChanged: source does not match filter — stopping')
+      this._cancelPauseDiscard()
       await this._stopRecording()
       return
     }
 
     if (!isPlaying) {
-      await this._stopRecording()
+      // Keep the recorder running through a brief pause instead of splitting the
+      // song into two files — only give up and discard if paused too long.
+      if (this._recorder.isRunning) this._schedulePauseDiscard()
+      // Clear any silence warning already showing — pausing explains it, no
+      // need to keep alarming the user about audio that's expected to be gone.
+      this.emit('audioDetected')
     } else {
+      this._cancelPauseDiscard()
       if (t.title && !this._recorder.isRunning) {
         log(`[Splitter] playStateChanged: resuming recording for "${t.title}"`)
-        this._startRecording(t)
+        void this._startRecording(t)
       } else {
         log(`[Splitter] playStateChanged: not starting — title="${t.title}" recorderRunning=${this._recorder.isRunning}`)
       }
       // Ensure a warm recorder is primed after playback resumes.
-      this._startWarmRecorder()
+      void this._startWarmRecorder()
     }
   }
 
-  private _startRecording(track: GsmtcTrack): void {
+  /** Schedule a discard of the in-progress recording if playback stays paused too long. */
+  private _schedulePauseDiscard(): void {
+    if (this._pauseDiscardTimer !== null) return
+    const seconds = this._settings?.pauseDiscardSeconds ?? TrackSplitter.DEFAULT_PAUSE_DISCARD_SECONDS
+    if (!Number.isFinite(seconds) || seconds <= 0) return
+    log(`[Splitter] playStateChanged: paused — will discard in ${seconds}s if not resumed`)
+    this._pauseDiscardTimer = setTimeout(() => {
+      this._pauseDiscardTimer = null
+      log('[Splitter] pause discard timer fired — discarding recording')
+      void this._stopRecording({ discard: true })
+    }, seconds * 1000)
+  }
+
+  private _cancelPauseDiscard(): void {
+    if (this._pauseDiscardTimer === null) return
+    clearTimeout(this._pauseDiscardTimer)
+    this._pauseDiscardTimer = null
+  }
+
+  private async _startRecording(track: GsmtcTrack): Promise<void> {
     if (!this._settings) return
     if (this._recorder.isRunning) {
       log(`[Splitter] _startRecording: SKIPPED — recorder already running (title="${track.title}")`)
@@ -317,14 +437,33 @@ export class TrackSplitter extends EventEmitter {
     }
 
     log(`[Splitter] _startRecording: START "${track.title}" by "${track.artist}"`)
+    // Set currentTrack synchronously — callers that check it right after this call
+    // (e.g. _onTrackChanged's recordingIdle fallback) must see a recording as pending
+    // even though the loopback PID below may still need to be awaited.
     this._currentTrack = track
     this._recordingStartedAt = Date.now()
     this._acquirePowerSaveBlocker()
-    this._recorder.start(this._settings.deviceId)
+
+    const loopbackPid = this._settings.deviceId === APP_LOOPBACK_DEVICE_ID
+      ? await this._resolveLoopbackPid(track.sourceAppId ?? '')
+      : null
+
+    // State may have moved on (track changed, stop requested) while awaiting the PID.
+    if (this._currentTrack !== track) return
+
+    try {
+      this._recorder.start(this._settings.deviceId, loopbackPid)
+    } catch (err) {
+      log(`[Splitter] _startRecording: recorder.start failed: ${(err as Error).message}`)
+      this._releasePowerSaveBlocker()
+      this._currentTrack = null
+      this.emit('error', err as Error)
+      return
+    }
     this.emit('recordingStarted', track)
   }
 
-  private _startRecordingImmediate(placeholder: GsmtcTrack): void {
+  private async _startRecordingImmediate(placeholder: GsmtcTrack): Promise<void> {
     if (!this._settings) return
     if (this._recorder.isRunning) {
       log(`[Splitter] _startRecordingImmediate: SKIPPED — recorder already running`)
@@ -337,7 +476,22 @@ export class TrackSplitter extends EventEmitter {
     this._currentTrack = placeholder
     this._recordingStartedAt = Date.now()
     this._acquirePowerSaveBlocker()
-    this._recorder.start(this._settings.deviceId)
+
+    const loopbackPid = this._settings.deviceId === APP_LOOPBACK_DEVICE_ID
+      ? await this._resolveLoopbackPid(placeholder.sourceAppId ?? '')
+      : null
+
+    if (this._currentTrack !== placeholder) return
+
+    try {
+      this._recorder.start(this._settings.deviceId, loopbackPid)
+    } catch (err) {
+      log(`[Splitter] _startRecordingImmediate: recorder.start failed: ${(err as Error).message}`)
+      this._releasePowerSaveBlocker()
+      this._pendingMetadataUpdate = false
+      this._currentTrack = null
+      this.emit('error', err as Error)
+    }
   }
 
   private _onTrackMetadataUpdated = (track: GsmtcTrack): void => {
@@ -384,11 +538,58 @@ export class TrackSplitter extends EventEmitter {
       log(`[Splitter] trackMetadataUpdated: recorder not running — starting fresh for "${track.title}"`)
       // Recorder stopped before metadata arrived (very rare race) — start fresh.
       if (track.isPlaying && track.title) {
-        this._startRecording(track)
+        void this._startRecording(track)
       }
     } else {
       log(`[Splitter] trackMetadataUpdated: IGNORED — recorderRunning=${this._recorder.isRunning} pendingMetadata=${this._pendingMetadataUpdate}`)
     }
+  }
+
+  /**
+   * Kick off (if not already cached or in flight) resolving sourceAppId to a PID
+   * for isolated app-loopback capture. Fire-and-forget pre-warm — shares its
+   * in-flight promise with _resolveLoopbackPid() so an eager call here and a
+   * later awaited call for the same app don't spawn two PowerShell lookups.
+   */
+  private _ensureLoopbackPidFor(sourceAppId: string): void {
+    if (!this._settings || this._settings.deviceId !== APP_LOOPBACK_DEVICE_ID) return
+    if (!sourceAppId.trim()) return
+    void this._resolveLoopbackPid(sourceAppId)
+  }
+
+  /**
+   * Resolve sourceAppId to a PID for isolated app-loopback capture, awaited at the
+   * point a recorder actually needs it. Serves from cache when already resolved,
+   * or joins an in-flight lookup (e.g. one kicked off eagerly by
+   * _ensureLoopbackPidFor) rather than starting a duplicate PowerShell query.
+   */
+  private _resolveLoopbackPid(sourceAppId: string): Promise<number | null> {
+    const appId = sourceAppId.trim()
+    if (!appId) return Promise.resolve(null)
+    if (this._loopbackPidCache.has(appId)) {
+      return Promise.resolve(this._loopbackPidCache.get(appId) ?? null)
+    }
+    const inFlight = this._loopbackPidPromises.get(appId)
+    if (inFlight) return inFlight
+
+    const promise = resolveAumidToPid(appId)
+      .then((pid) => {
+        this._loopbackPidCache.set(appId, pid)
+        if (pid === null) {
+          log(`[Splitter] could not resolve a PID for source app "${appId}" — isolated capture unavailable`)
+        }
+        return pid
+      })
+      .catch((err) => {
+        log(`[Splitter] loopback PID resolution failed: ${(err as Error).message}`)
+        this._loopbackPidCache.set(appId, null)
+        return null
+      })
+      .finally(() => {
+        this._loopbackPidPromises.delete(appId)
+      })
+    this._loopbackPidPromises.set(appId, promise)
+    return promise
   }
 
   /** Create a fresh AudioRecorder (with error + silence listeners), returning the old instance. */
@@ -400,7 +601,7 @@ export class TrackSplitter extends EventEmitter {
   }
 
   /** Start a pre-warmed ffmpeg instance that captures audio right now, ready to promote. */
-  private _startWarmRecorder(): void {
+  private async _startWarmRecorder(): Promise<void> {
     if (!this._settings || this._warmRecorder) return
     const warm = new AudioRecorder()
     // On error or unexpected stop, clear and restart so the next track change promotes a warm recorder.
@@ -416,13 +617,27 @@ export class TrackSplitter extends EventEmitter {
         this._scheduleWarmRestart()
       }
     })
+    const activeSourceAppId = this._gsmtc.currentTrack.sourceAppId ?? ''
+
+    // Reserve the slot immediately so a concurrent _startWarmRecorder() call doesn't
+    // spawn a second warm recorder while the loopback PID below is still resolving.
+    this._warmRecorder = warm
+
+    const loopbackPid = this._settings.deviceId === APP_LOOPBACK_DEVICE_ID
+      ? await this._resolveLoopbackPid(activeSourceAppId)
+      : null
+
+    // Superseded (killed/replaced) while awaiting the PID — don't start it now.
+    if (this._warmRecorder !== warm) return
+
     try {
-      warm.start(this._settings.deviceId)
-      this._warmRecorder = warm
+      warm.start(this._settings.deviceId, loopbackPid)
       this._warmStartedAt = Date.now()
       log('[Splitter] warm recorder started')
     } catch {
       // Warm recorder failed to start — next track change will fall back to cold start.
+      this._warmRecorder = null
+      this._scheduleWarmRestart()
     }
   }
 
@@ -461,7 +676,7 @@ export class TrackSplitter extends EventEmitter {
     if (this._warmRestartTimer !== null || !this._active) return
     this._warmRestartTimer = setTimeout(() => {
       this._warmRestartTimer = null
-      if (this._active) this._startWarmRecorder()
+      if (this._active) void this._startWarmRecorder()
     }, 1_000)
   }
 
@@ -517,7 +732,9 @@ export class TrackSplitter extends EventEmitter {
     dropIfShortOnTrackChange?: boolean
     finalizeInBackground?: boolean
     fastStop?: boolean
+    discard?: boolean
   }): Promise<void> {
+    this._cancelPauseDiscard()
     if (this._stopInFlight) {
       await this._stopInFlight
       return
@@ -547,6 +764,7 @@ export class TrackSplitter extends EventEmitter {
     dropIfShortOnTrackChange?: boolean
     finalizeInBackground?: boolean
     fastStop?: boolean
+    discard?: boolean
   }): Promise<void> {
     const settings = this._settings!
     const track = this._currentTrack
@@ -556,12 +774,13 @@ export class TrackSplitter extends EventEmitter {
     }
     const startedAt = this._recordingStartedAt
     const trimSec = this._trimSec
-    log(`[Splitter] _stopRecordingCore: stopping "${track.title}" fast=${options?.fastStop} finalizeBg=${options?.finalizeInBackground}`)
+    log(`[Splitter] _stopRecordingCore: stopping "${track.title}" fast=${options?.fastStop} finalizeBg=${options?.finalizeInBackground} discard=${options?.discard}`)
 
     // Clear current state immediately so a new track can start right after stop().
     this._currentTrack = null
     this._recordingStartedAt = 0
     this._trimSec = 0
+    this.emit('recordingIdle')
 
     try {
       const stopRequestedAt = Date.now()
@@ -577,6 +796,7 @@ export class TrackSplitter extends EventEmitter {
         tmpWav,
         durationSec,
         dropIfShortOnTrackChange: options?.dropIfShortOnTrackChange === true,
+        forceDiscard: options?.discard === true,
         trimSec,
         maxDurationSec: preciseDurationSec
       })
@@ -628,10 +848,11 @@ export class TrackSplitter extends EventEmitter {
     tmpWav: string
     durationSec: number
     dropIfShortOnTrackChange: boolean
+    forceDiscard?: boolean
     trimSec?: number
     maxDurationSec?: number
   }): Promise<void> {
-    const { settings, track, startedAt, tmpWav, durationSec, dropIfShortOnTrackChange } = args
+    const { settings, track, startedAt, tmpWav, durationSec, dropIfShortOnTrackChange, forceDiscard } = args
     let { trimSec = 0, maxDurationSec } = args
 
     // Apply any saved trim preset for this song identity.
@@ -648,6 +869,25 @@ export class TrackSplitter extends EventEmitter {
     }
 
       log(`[Splitter] _finalize: "${track.title}" durationSec=${durationSec} minSave=${settings.minSaveSeconds} hasTitle=${!!track.title}`)
+
+      // Playback was paused too long — discard unconditionally, regardless of duration.
+      if (forceDiscard) {
+        log(`[Splitter] _finalize: DISCARD — paused too long ("${track.title}")`)
+        try { unlinkSync(tmpWav) } catch { /* ignore */ }
+        this.emit('recordingFinished', {
+          id: `${Date.now()}`,
+          artist: track.artist,
+          title: track.title,
+          filePath: '',
+          albumArtFile: track.albumArtFile,
+          albumArtMime: track.albumArtMime,
+          durationSec,
+          status: 'skipped',
+          error: TrackSplitter.PAUSE_DISCARD_REASON,
+          startedAt
+        } satisfies RecordingEntry)
+        return
+      }
 
       // Placeholder recording whose metadata never updated — discard silently.
       if (!track.title || (track.sourceAppId && track.title === track.sourceAppId)) {

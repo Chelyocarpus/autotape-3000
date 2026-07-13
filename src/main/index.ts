@@ -1,6 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, nativeTheme, Notification } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { GsmtcService } from './services/GsmtcService'
@@ -17,15 +18,19 @@ import {
   getTrimPreset
 } from './services/TrimPresetsStore'
 
-// Must be called before app.whenReady() — marks the scheme as safe for fetch() in the renderer.
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'autotape-audio', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
-])
-
 let mainWindow: BrowserWindow | null = null
 let _flushWindowState: (() => void) | null = null
 const gsmtcService = new GsmtcService()
 const trackSplitter = new TrackSplitter(gsmtcService)
+
+// Guards against "Render frame was disposed" errors: mainWindow can be
+// non-null and not yet destroyed while its webContents frame is mid-swap
+// (e.g. during a reload or right as the window is closing).
+function safeSend(channel: string, ...args: unknown[]): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  if (!mainWindow.webContents.mainFrame) return
+  mainWindow.webContents.send(channel, ...args)
+}
 
 // ─── Window state persistence ──────────────────────────────────────────────
 
@@ -136,26 +141,14 @@ function registerArtProtocol(): void {
       }
 
       const fileUrl = pathToFileURL(filePathParam).toString()
-      return net.fetch(fileUrl)
+      // Must be awaited inside the try — net.fetch() rejects (not a non-2xx Response)
+      // when the file can't be read, and returning the un-awaited promise would let
+      // that rejection bypass this catch block entirely, surfacing as a raw network
+      // error in the renderer instead of the clean error Response below.
+      return await net.fetch(fileUrl)
     } catch (error) {
       console.error('[ArtProtocol] Failed to serve album art:', error)
       return new Response('Failed to load art', { status: 500 })
-    }
-  })
-
-  // Serve local audio files for the trim preview modal
-  protocol.handle('autotape-audio', async (request) => {
-    try {
-      const url = new URL(request.url)
-      const filePathParam = url.searchParams.get('path')
-      if (!filePathParam) {
-        return new Response('Missing path', { status: 400 })
-      }
-      const fileUrl = pathToFileURL(filePathParam).toString()
-      return net.fetch(fileUrl, { headers: request.headers })
-    } catch (error) {
-      console.error('[AudioProtocol] Failed to serve audio:', error)
-      return new Response('Failed to load audio', { status: 500 })
     }
   })
 }
@@ -226,6 +219,17 @@ function createWindow(): void {
     mainWindow = null
   })
 
+  // The window object and its webContents can outlive the underlying renderer
+  // process (crash, OOM-kill, GPU loss). Without reloading here, the window
+  // stays open but permanently stops receiving IPC — every safeSend below
+  // would silently no-op forever instead of the app recovering.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Window] Renderer process gone:', details.reason)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload()
+    }
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -241,17 +245,17 @@ function createWindow(): void {
 // ─── GSMTC event wiring ────────────────────────────────────────────────────
 function wireGsmtc(): void {
   gsmtcService.on('trackChanged', (oldTrack, newTrack) => {
-    mainWindow?.webContents.send('gsmtc:track-changed', newTrack)
+    safeSend('gsmtc:track-changed', newTrack)
     // Also push old track for debugging
     void oldTrack
   })
 
   gsmtcService.on('playStateChanged', (isPlaying) => {
-    mainWindow?.webContents.send('gsmtc:play-state', isPlaying)
+    safeSend('gsmtc:play-state', isPlaying)
   })
 
   gsmtcService.on('artworkUpdated', (track) => {
-    mainWindow?.webContents.send('gsmtc:artwork-updated', track)
+    safeSend('gsmtc:artwork-updated', track)
   })
 
   gsmtcService.on('error', (err) => {
@@ -262,11 +266,19 @@ function wireGsmtc(): void {
 // ─── TrackSplitter event wiring ────────────────────────────────────────────
 function wireSplitter(): void {
   trackSplitter.on('recordingStarted', (track) => {
-    mainWindow?.webContents.send('recorder:started', track)
+    safeSend('recorder:started', track)
   })
 
   trackSplitter.on('recordingFinished', (entry) => {
-    mainWindow?.webContents.send('recorder:finished', entry)
+    safeSend('recorder:finished', entry)
+  })
+
+  trackSplitter.on('recordingIdle', () => {
+    safeSend('recorder:idle')
+  })
+
+  trackSplitter.on('stopped', () => {
+    safeSend('recorder:stopped')
   })
 
   trackSplitter.on('error', (err) => {
@@ -274,7 +286,7 @@ function wireSplitter(): void {
   })
 
   trackSplitter.on('silenceWarning', () => {
-    mainWindow?.webContents.send('recorder:silence-warning')
+    safeSend('recorder:silence-warning')
 
     // The in-app modal is invisible if the user is tabbed away — pair it with
     // a native toast and a taskbar flash so the warning isn't silent too.
@@ -292,7 +304,7 @@ function wireSplitter(): void {
   })
 
   trackSplitter.on('audioDetected', () => {
-    mainWindow?.webContents.send('recorder:audio-detected')
+    safeSend('recorder:audio-detected')
     mainWindow?.flashFrame(false)
   })
 }
@@ -326,12 +338,13 @@ function registerIpcHandlers(): void {
       deviceId: settings.deviceId,
       duplicateAction: settings.duplicateAction,
       sessionFilter: settings.sessionFilter,
-      minSaveSeconds: settings.minSaveSeconds
+      minSaveSeconds: settings.minSaveSeconds,
+      pauseDiscardSeconds: settings.pauseDiscardSeconds
     })
   })
 
   ipcMain.handle('recorder:stop', async () => {
-    await trackSplitter.stopListening()
+    return trackSplitter.requestStop()
   })
 
   // Settings
@@ -363,12 +376,21 @@ function registerIpcHandlers(): void {
   // Audio devices
   ipcMain.handle('audio:devices', () => listAudioDevices())
 
+  // Reads a saved recording's raw bytes for the trim editor's waveform decode.
+  // Deliberately an IPC round-trip rather than a fetch() to a custom protocol —
+  // Chromium's fetch() CORS allowlist for cross-scheme requests only covers
+  // chrome/chrome-extension/chrome-untrusted/data/http/https, so a custom
+  // scheme is never fetchable from the renderer regardless of how the scheme
+  // is registered. IPC isn't subject to that restriction.
+  ipcMain.handle('audio:read-file', (_event, filePath: string) => readFile(filePath))
+
   // File dialog
   ipcMain.handle('dialog:pick-output-dir', async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory', 'createDirectory'],
-      title: 'Select Output Folder'
+      title: 'Select Output Folder',
+      defaultPath: loadSettings().outputDir || undefined
     })
     return result.canceled ? null : result.filePaths[0]
   })

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { DuplicateAction, MediaFormat } from './FileManager'
+import { APP_LOOPBACK_DEVICE_ID, isProcessLoopbackSupported } from './AudioDevices'
 
 export interface UserSettings {
   outputDir: string
@@ -12,6 +13,8 @@ export interface UserSettings {
   duplicateAction: DuplicateAction
   sessionFilter: string
   minSaveSeconds: number
+  /** Seconds paused before an in-progress recording is stopped and discarded. 0 disables. */
+  pauseDiscardSeconds: number
   /** Explicit path to the ffmpeg binary. Empty string = auto-detect. */
   ffmpegPath: string
 }
@@ -20,10 +23,11 @@ const DEFAULTS: UserSettings = {
   outputDir: join(homedir(), 'Music', 'Autotape 3000'),
   format: 'mp3',
   bitrate: 320,
-  deviceId: 'default',
+  deviceId: isProcessLoopbackSupported() ? APP_LOOPBACK_DEVICE_ID : 'default',
   duplicateAction: 'increment',
   sessionFilter: 'auto',
   minSaveSeconds: 0,
+  pauseDiscardSeconds: 60,
   ffmpegPath: ''
 }
 

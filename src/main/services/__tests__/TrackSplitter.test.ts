@@ -10,6 +10,7 @@ import type { RecordingEntry, TrackSplitterSettings } from '../TrackSplitter'
 // API (gsmtc events in, recordingStarted/recordingFinished events out).
 
 vi.mock('electron', () => ({
+  app: { isPackaged: false },
   powerSaveBlocker: {
     start: vi.fn(() => 1),
     stop: vi.fn()
@@ -22,9 +23,12 @@ vi.mock('../AudioRecorder', async () => {
     static instances: FakeAudioRecorder[] = []
     static encodeToMp3 = vi.fn().mockResolvedValue(undefined)
     static trimWav = vi.fn().mockResolvedValue(undefined)
+    /** When set, the next start() call throws this instead of starting — simulates an unresolved loopback PID. */
+    static throwOnStart: Error | null = null
 
     isRunning = false
     startCalls: string[] = []
+    startPidCalls: Array<number | null | undefined> = []
     stopCalls: Array<{ fast?: boolean } | undefined> = []
     private readonly _tmpPath: string
 
@@ -34,9 +38,13 @@ vi.mock('../AudioRecorder', async () => {
       FakeAudioRecorder.instances.push(this)
     }
 
-    start(deviceId: string): string {
-      this.isRunning = true
+    start(deviceId: string, loopbackPid?: number | null): string {
       this.startCalls.push(deviceId)
+      this.startPidCalls.push(loopbackPid)
+      if (FakeAudioRecorder.throwOnStart) {
+        throw FakeAudioRecorder.throwOnStart
+      }
+      this.isRunning = true
       return this._tmpPath
     }
 
@@ -48,6 +56,10 @@ vi.mock('../AudioRecorder', async () => {
   }
   return { AudioRecorder: FakeAudioRecorder }
 })
+
+vi.mock('../ProcessResolver', () => ({
+  resolveAumidToPid: vi.fn()
+}))
 
 vi.mock('../FileManager', () => ({
   resolveOutputPath: vi.fn(
@@ -73,13 +85,21 @@ vi.mock('fs', () => {
 
 import { unlinkSync } from 'fs'
 import { AudioRecorder } from '../AudioRecorder'
+import { APP_LOOPBACK_DEVICE_ID } from '../AudioDevices'
+import { resolveAumidToPid } from '../ProcessResolver'
 import { resolveOutputPath } from '../FileManager'
 import { TrackSplitter } from '../TrackSplitter'
 
 type FakeAudioRecorderCtor = typeof AudioRecorder & {
-  instances: Array<{ isRunning: boolean; startCalls: string[]; stopCalls: Array<{ fast?: boolean } | undefined> }>
+  instances: Array<EventEmitter & {
+    isRunning: boolean
+    startCalls: string[]
+    startPidCalls: Array<number | null | undefined>
+    stopCalls: Array<{ fast?: boolean } | undefined>
+  }>
   encodeToMp3: ReturnType<typeof vi.fn>
   trimWav: ReturnType<typeof vi.fn>
+  throwOnStart: Error | null
 }
 
 const FakeRecorder = AudioRecorder as unknown as FakeAudioRecorderCtor
@@ -113,6 +133,7 @@ function makeSettings(overrides: Partial<TrackSplitterSettings> = {}): TrackSpli
     duplicateAction: 'increment',
     sessionFilter: 'auto',
     minSaveSeconds: 0,
+    pauseDiscardSeconds: 0,
     ...overrides
   }
 }
@@ -129,11 +150,14 @@ describe('TrackSplitter', () => {
     FakeRecorder.instances.length = 0
     FakeRecorder.encodeToMp3.mockClear()
     FakeRecorder.trimWav.mockClear()
+    FakeRecorder.throwOnStart = null
     vi.mocked(resolveOutputPath).mockClear()
     vi.mocked(resolveOutputPath).mockImplementation(
       ({ outputDir, artist, title, format }) => `${outputDir}\\${artist} - ${title}.${format}`
     )
     vi.mocked(unlinkSync).mockClear()
+    vi.mocked(resolveAumidToPid).mockReset()
+    vi.mocked(resolveAumidToPid).mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -322,5 +346,320 @@ describe('TrackSplitter', () => {
     expect(activeRecorder.stopCalls).toEqual([{ fast: false }])
     expect(finished).toHaveLength(1)
     expect(finished[0]).toMatchObject({ title: 'Song A', status: 'ok' })
+  })
+
+  it('resolves the source app to a PID and passes it to the recorder for isolated app capture', async () => {
+    vi.setSystemTime(6_000_000)
+    vi.mocked(resolveAumidToPid).mockResolvedValue(4242)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '', sourceAppId: 'Spotify.exe' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+
+    splitter.startListening(makeSettings({ deviceId: APP_LOOPBACK_DEVICE_ID }))
+    await flush() // let the eagerly-kicked-off PID resolution settle and get cached
+
+    expect(resolveAumidToPid).toHaveBeenCalledWith('Spotify.exe')
+    // Cold-start path (playStateChanged resume) — the idle main recorder, not the warm one.
+    gsmtc.currentTrack = track({ artist: 'Artist A', title: 'Song A', isPlaying: true, sourceAppId: 'Spotify.exe' })
+    gsmtc.emit('playStateChanged', true)
+    // Even a cached PID is awaited, so recorder.start() lands a microtask later.
+    await flush()
+
+    const mainRecorder = FakeRecorder.instances[0]
+    expect(mainRecorder.startCalls).toEqual([APP_LOOPBACK_DEVICE_ID])
+    expect(mainRecorder.startPidCalls).toEqual([4242])
+  })
+
+  it('emits an error instead of throwing when recorder.start() fails for isolated app capture', async () => {
+    vi.setSystemTime(7_000_000)
+    vi.mocked(resolveAumidToPid).mockResolvedValue(4242)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '', sourceAppId: 'Spotify.exe' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const errors: Error[] = []
+    const started: GsmtcTrack[] = []
+    splitter.on('error', (e) => errors.push(e))
+    splitter.on('recordingStarted', (t) => started.push(t))
+
+    splitter.startListening(makeSettings({ deviceId: APP_LOOPBACK_DEVICE_ID }))
+    await flush()
+
+    FakeRecorder.throwOnStart = new Error('Isolated app capture requires a resolved process ID')
+    gsmtc.currentTrack = track({ artist: 'Artist A', title: 'Song A', isPlaying: true, sourceAppId: 'Spotify.exe' })
+    expect(() => gsmtc.emit('playStateChanged', true)).not.toThrow()
+    await flush()
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0].message).toMatch(/process ID/)
+    expect(started).toHaveLength(0)
+  })
+
+  it('does not fail the very first isolated-capture recording when startListening finds a track already playing', async () => {
+    // Regression: previously _startRecording read the loopback PID cache
+    // synchronously, so a track already playing at startListening() time raced
+    // the async PID resolution kicked off in the same call and always lost —
+    // recorder.start() threw "Isolated app capture requires a resolved process ID".
+    vi.setSystemTime(9_000_000)
+    vi.mocked(resolveAumidToPid).mockResolvedValue(4242)
+
+    const gsmtc = new FakeGsmtc(
+      track({ artist: 'Artist A', title: 'Song A', isPlaying: true, sourceAppId: 'Spotify.exe' })
+    )
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const errors: Error[] = []
+    const started: GsmtcTrack[] = []
+    splitter.on('error', (e) => errors.push(e))
+    splitter.on('recordingStarted', (t) => started.push(t))
+
+    splitter.startListening(makeSettings({ deviceId: APP_LOOPBACK_DEVICE_ID }))
+    await flush()
+
+    expect(errors).toHaveLength(0)
+    expect(started).toMatchObject([{ title: 'Song A' }])
+    const mainRecorder = FakeRecorder.instances[0]
+    expect(mainRecorder.startCalls).toEqual([APP_LOOPBACK_DEVICE_ID])
+    expect(mainRecorder.startPidCalls).toEqual([4242])
+  })
+
+  it('caches PID resolution per source app so GSMTC flapping between two apps does not re-query for every flip', async () => {
+    vi.setSystemTime(8_000_000)
+    vi.mocked(resolveAumidToPid).mockImplementation(async (appId: string) =>
+      appId === 'AppA.exe' ? 111 : 222
+    )
+
+    // 'auto' source selection can bounce a few times between two real sessions in
+    // quick succession (e.g. a paused app vs. a playing one) — this reproduces that
+    // without a single-entry cache turning every flip into a fresh PowerShell spawn.
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '', sourceAppId: 'AppA.exe' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    splitter.startListening(makeSettings({ deviceId: APP_LOOPBACK_DEVICE_ID }))
+    await flush()
+
+    const trackA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true, sourceAppId: 'AppA.exe' })
+    const trackB = track({ artist: 'Artist B', title: 'Song B', isPlaying: true, sourceAppId: 'AppB.exe' })
+
+    gsmtc.emit('trackChanged', track({ isPlaying: false }), trackA)
+    await flush()
+    gsmtc.emit('trackChanged', trackA, trackB)
+    await flush()
+    gsmtc.emit('trackChanged', trackB, trackA)
+    await flush()
+    gsmtc.emit('trackChanged', trackA, trackB)
+    await flush()
+
+    const resolvedForApps = vi.mocked(resolveAumidToPid).mock.calls.map(([appId]) => appId)
+    expect(resolvedForApps.filter((id) => id === 'AppA.exe')).toHaveLength(1)
+    expect(resolvedForApps.filter((id) => id === 'AppB.exe')).toHaveLength(1)
+  })
+
+  describe('requestStop (two-click graceful stop)', () => {
+    it('defers stopping while the track is still playing, then finalizes naturally when the track ends', async () => {
+      vi.setSystemTime(10_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const finished: RecordingEntry[] = []
+      const stopped = vi.fn()
+      splitter.on('recordingFinished', (e) => finished.push(e))
+      splitter.on('stopped', stopped)
+
+      splitter.startListening(makeSettings())
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      await expect(splitter.requestStop()).resolves.toBe('pending')
+      expect(stopped).not.toHaveBeenCalled()
+      expect(finished).toHaveLength(0)
+      // Recording keeps running while the stop is pending.
+      expect(FakeRecorder.instances[1].isRunning).toBe(true)
+
+      vi.setSystemTime(10_010_000)
+      const songB = track({ artist: 'Artist B', title: 'Song B', isPlaying: true })
+      gsmtc.currentTrack = songB
+      gsmtc.emit('trackChanged', songA, songB)
+      await flush()
+
+      expect(stopped).toHaveBeenCalledTimes(1)
+      expect(finished).toHaveLength(1)
+      expect(finished[0]).toMatchObject({ title: 'Song A', status: 'ok' })
+      // No recording should have started for songB — the stop won out.
+      expect(FakeRecorder.instances.some((r) => r.isRunning)).toBe(false)
+    })
+
+    it('force-stops immediately on a second requestStop() call', async () => {
+      vi.setSystemTime(11_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const stopped = vi.fn()
+      splitter.on('stopped', stopped)
+
+      splitter.startListening(makeSettings())
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      await expect(splitter.requestStop()).resolves.toBe('pending')
+      await expect(splitter.requestStop()).resolves.toBe('stopped')
+      expect(stopped).toHaveBeenCalledTimes(1)
+      expect(FakeRecorder.instances[1].isRunning).toBe(false)
+    })
+
+    it('stops immediately (no deferral) when the track is already paused', async () => {
+      vi.setSystemTime(12_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const stopped = vi.fn()
+      splitter.on('stopped', stopped)
+
+      splitter.startListening(makeSettings())
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      // Song is paused (live GSMTC state), but the recorder is still running per
+      // the pause-tolerance behavior below.
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+
+      await expect(splitter.requestStop()).resolves.toBe('stopped')
+      expect(stopped).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('pause handling', () => {
+    it('keeps the recorder running through a brief pause instead of splitting into two files', async () => {
+      vi.setSystemTime(20_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const started = vi.fn()
+      splitter.on('recordingStarted', started)
+
+      splitter.startListening(makeSettings({ pauseDiscardSeconds: 60 }))
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      const activeRecorder = FakeRecorder.instances[1]
+      expect(started).toHaveBeenCalledTimes(1)
+
+      // Pause, then resume shortly after — well within the grace period.
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(activeRecorder.isRunning).toBe(true)
+      expect(activeRecorder.stopCalls).toHaveLength(0)
+
+      gsmtc.currentTrack = songA
+      gsmtc.emit('playStateChanged', true)
+      await flush()
+
+      // No restart — same recorder, no second recordingStarted.
+      expect(started).toHaveBeenCalledTimes(1)
+      expect(activeRecorder.isRunning).toBe(true)
+    })
+
+    it('suppresses silence warnings from ffmpeg while paused, since silence is expected', async () => {
+      vi.setSystemTime(23_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const silenceWarning = vi.fn()
+      splitter.on('silenceWarning', silenceWarning)
+
+      splitter.startListening(makeSettings())
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      const activeRecorder = FakeRecorder.instances[1]
+
+      // Paused — the recorder keeps running and ffmpeg naturally detects silence.
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+      activeRecorder.emit('silence-warning')
+      expect(silenceWarning).not.toHaveBeenCalled()
+
+      // Still playing — a genuine silence warning should come through.
+      gsmtc.currentTrack = songA
+      gsmtc.emit('playStateChanged', true)
+      activeRecorder.emit('silence-warning')
+      expect(silenceWarning).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears an already-showing silence warning the moment playback pauses', async () => {
+      vi.setSystemTime(24_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const audioDetected = vi.fn()
+      splitter.on('audioDetected', audioDetected)
+
+      splitter.startListening(makeSettings())
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+
+      expect(audioDetected).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops and discards the recording once paused longer than pauseDiscardSeconds, and tells listeners nothing is being captured', async () => {
+      vi.setSystemTime(21_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const finished: RecordingEntry[] = []
+      const idle = vi.fn()
+      splitter.on('recordingFinished', (e) => finished.push(e))
+      splitter.on('recordingIdle', idle)
+
+      splitter.startListening(makeSettings({ pauseDiscardSeconds: 30 }))
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      const activeRecorder = FakeRecorder.instances[1]
+
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(activeRecorder.isRunning).toBe(false)
+      expect(finished).toHaveLength(1)
+      expect(finished[0]).toMatchObject({ title: 'Song A', status: 'skipped' })
+      expect(finished[0].error).toMatch(/paused too long/)
+      expect(unlinkSync).toHaveBeenCalled()
+      expect(idle).toHaveBeenCalledTimes(1)
+    })
+
+    it('never discards when pauseDiscardSeconds is 0', async () => {
+      vi.setSystemTime(22_000_000)
+      const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+      const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+      const finished: RecordingEntry[] = []
+      splitter.on('recordingFinished', (e) => finished.push(e))
+
+      splitter.startListening(makeSettings({ pauseDiscardSeconds: 0 }))
+      const songA = track({ artist: 'Artist A', title: 'Song A', isPlaying: true })
+      gsmtc.currentTrack = songA
+      gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+      await flush()
+
+      const activeRecorder = FakeRecorder.instances[1]
+
+      gsmtc.currentTrack = { ...songA, isPlaying: false }
+      gsmtc.emit('playStateChanged', false)
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(activeRecorder.isRunning).toBe(true)
+      expect(finished).toHaveLength(0)
+    })
   })
 })

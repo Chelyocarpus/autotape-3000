@@ -7,6 +7,10 @@ import {
   Mic2,
   Disc,
   ExternalLink,
+  Cable,
+  Focus,
+  Speaker,
+  Mic,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -17,7 +21,7 @@ import type { AudioDevice, UserSettings } from '../types'
 
 export const ONBOARDING_KEY = 'autotape-onboarding-done'
 
-const STEP_LABELS = ['Welcome', 'Audio Device', 'Save To'] as const
+const STEP_LABELS = ['Welcome', 'Audio Capture', 'Save To'] as const
 
 // ─── Root wizard ──────────────────────────────────────────────────────────────
 
@@ -119,7 +123,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           </div>
           <div>
             <h1 className="text-base font-semibold text-zinc-100">Welcome to Autotape 3000</h1>
-            <p className="text-xs text-zinc-500">Let's get you set up in 3 steps.</p>
+            <p className="text-xs text-zinc-500">Let's get you set up in 2 steps.</p>
           </div>
         </div>
 
@@ -127,7 +131,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           className="rounded-xl p-4 flex flex-col gap-2.5 mt-1 bg-zinc-800 border border-zinc-700"
         >
           {[
-            { icon: Mic2, label: 'Choose your audio capture device' },
+            { icon: Mic2, label: 'Choose your audio capture method' },
             { icon: FolderOpen, label: 'Set your recordings folder' },
           ].map(({ icon: Icon, label }) => (
             <div key={label} className="flex items-center gap-2.5 text-sm text-zinc-400">
@@ -138,8 +142,8 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
 
         <p className="text-xs text-zinc-600 leading-relaxed px-0.5 mt-auto">
-          Autotape records audio playing through your PC and splits it into individual tracks.
-          Track metadata and album art are embedded when the source app reports them.
+          Autotape records audio playing through your PC, splits it into individual tracks, and
+          embeds metadata and album art when the source app reports them.
         </p>
       </div>
 
@@ -163,6 +167,11 @@ interface DeviceStepProps {
   onBack: () => void
 }
 
+// Matches AudioDevices.ts's APP_LOOPBACK_DEVICE_ID — the renderer doesn't import
+// main-process modules, so this sentinel is duplicated here (same pattern already
+// used for the 'default' device id below).
+const ISOLATED_DEVICE_ID = 'app-loopback'
+
 const LOOPBACK_HINTS = ['stereo mix', 'wave out', 'what u hear', 'loopback', 'virtual cable', 'vb-audio']
 
 function isLoopbackDevice(name: string): boolean {
@@ -170,18 +179,35 @@ function isLoopbackDevice(name: string): boolean {
   return LOOPBACK_HINTS.some((hint) => lower.includes(hint))
 }
 
-function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps) {
-  const [selectedId, setSelectedId] = useState<string>(() => settings?.deviceId ?? 'default')
+type CaptureChoice = 'cable' | 'isolated' | 'standard' | 'other'
 
-  // When settings load, seed the selection (keep 'default' if nothing else is set)
+function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps) {
+  const [selectedId, setSelectedId] = useState<string>(() => settings?.deviceId ?? '')
+
+  // Settings load asynchronously — seed the selection once they arrive.
   useEffect(() => {
     if (settings?.deviceId && !selectedId) {
       setSelectedId(settings.deviceId)
     }
   }, [settings, selectedId])
 
-  const loopbackDevices = devices.filter((d) => isLoopbackDevice(d.name))
-  const otherDevices = devices.filter((d) => !isLoopbackDevice(d.name))
+  const isolatedDevice = devices.find((d) => d.id === ISOLATED_DEVICE_ID)
+  const standardDevice = devices.find((d) => d.id === 'default')
+  const cableDevices = devices.filter((d) => d.id !== ISOLATED_DEVICE_ID && isLoopbackDevice(d.name))
+  const otherDevices = devices.filter(
+    (d) => d.id !== ISOLATED_DEVICE_ID && d.id !== 'default' && !isLoopbackDevice(d.name)
+  )
+
+  const choice: CaptureChoice | null =
+    selectedId === ISOLATED_DEVICE_ID
+      ? 'isolated'
+      : selectedId === 'default'
+        ? 'standard'
+        : cableDevices.some((d) => d.id === selectedId)
+          ? 'cable'
+          : selectedId
+            ? 'other'
+            : null
 
   const handleContinue = async () => {
     if (settings && selectedId) {
@@ -195,11 +221,12 @@ function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <Mic2 className="w-4 h-4 text-amber-400 shrink-0" />
-          <h2 className="text-sm font-semibold text-zinc-100">Audio Capture Device</h2>
+          <h2 className="text-sm font-semibold text-zinc-100">Audio Capture Method</h2>
         </div>
         <p className="text-xs text-zinc-500 leading-relaxed">
-          Choose the audio output device to record from. "Default Audio Output" works for most setups.
-          For music-only capture, use a virtual cable to isolate the source.
+          {devices.length === 0
+            ? 'Checking what your system supports…'
+            : 'Pick how Autotape captures audio.'}
         </p>
       </div>
 
@@ -209,43 +236,55 @@ function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps
           Loading devices…
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          <Select value={selectedId} onValueChange={setSelectedId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select a capture device…" />
-            </SelectTrigger>
-            <SelectContent>
-              {loopbackDevices.length > 0 && (
-                <>
-                  <div className="px-2 py-1.5 text-[10px] font-semibold tracking-wider text-amber-500 uppercase">
-                    Recommended
-                  </div>
-                  {loopbackDevices.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                  {otherDevices.length > 0 && (
-                    <div className="px-2 py-1.5 text-[10px] font-semibold tracking-wider text-zinc-600 uppercase mt-1">
-                      Other devices
-                    </div>
-                  )}
-                </>
-              )}
-              {otherDevices.map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-col gap-2.5">
+          <div className="grid grid-cols-2 gap-2">
+            <ChoiceCard
+              icon={Cable}
+              title="Virtual Audio Cable"
+              description="Routes your player through a virtual audio cable. A plain passthrough, nothing to resolve."
+              selected={choice === 'cable'}
+              disabled={cableDevices.length === 0}
+              disabledHint="No virtual cable detected. Install one (e.g. VB-Audio) to enable this."
+              onClick={() => cableDevices[0] && setSelectedId(cableDevices[0].id)}
+            />
+            <ChoiceCard
+              icon={Focus}
+              title="Isolated"
+              description="Records just the app that's currently playing. No virtual audio cable needed, but less robust."
+              selected={choice === 'isolated'}
+              disabled={!isolatedDevice}
+              disabledHint="Requires Windows 10 2004 (build 19041) or later."
+              onClick={() => isolatedDevice && setSelectedId(isolatedDevice.id)}
+            />
+            <ChoiceCard
+              icon={Speaker}
+              title="Standard"
+              description="Captures all system audio, including notification sounds and other apps."
+              selected={choice === 'standard'}
+              disabled={!standardDevice}
+              onClick={() => standardDevice && setSelectedId(standardDevice.id)}
+            />
+            <ChoiceCard
+              icon={Mic}
+              title="Other"
+              description="Pick a specific input device, such as a microphone or line-in."
+              selected={choice === 'other'}
+              disabled={otherDevices.length === 0}
+              disabledHint="No other input devices found."
+              onClick={() => otherDevices[0] && setSelectedId(otherDevices[0].id)}
+            />
+          </div>
 
-          {selectedId && selectedId !== 'default' && !isLoopbackDevice(devices.find((d) => d.id === selectedId)?.name ?? '') && (
-            <p className="text-[11px] text-zinc-600 leading-relaxed">
-              For best results, route your music player through a virtual cable (e.g. VB-Audio) so
-              only music is captured, not all system audio.
-            </p>
+          {choice === 'cable' && cableDevices.length > 1 && (
+            <DeviceSubPicker devices={cableDevices} selectedId={selectedId} onChange={setSelectedId} />
           )}
+          {choice === 'other' && (
+            <DeviceSubPicker devices={otherDevices} selectedId={selectedId} onChange={setSelectedId} />
+          )}
+
+          <p className="text-[11px] text-zinc-600 leading-relaxed">
+            Don't worry about selecting the wrong option. Change this anytime in Settings.
+          </p>
         </div>
       )}
 
@@ -256,6 +295,75 @@ function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps
         nextLabel="Continue"
       />
     </div>
+  )
+}
+
+function ChoiceCard({
+  icon: Icon,
+  title,
+  description,
+  selected,
+  disabled,
+  disabledHint,
+  onClick,
+}: {
+  icon: typeof Cable
+  title: string
+  description: string
+  selected: boolean
+  disabled?: boolean
+  disabledHint?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={selected}
+      title={disabled ? disabledHint : undefined}
+      className={cn(
+        'text-left rounded-xl border p-3 flex flex-col gap-1 transition-colors',
+        disabled
+          ? 'border-zinc-800 bg-zinc-900/40 opacity-60 cursor-not-allowed'
+          : selected
+            ? 'border-amber-600 bg-amber-500/10 ring-1 ring-amber-600/30'
+            : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Icon className={cn('w-3.5 h-3.5 shrink-0', !disabled && selected ? 'text-amber-400' : 'text-zinc-500')} />
+        <span className={cn('text-xs font-semibold', disabled ? 'text-zinc-600' : 'text-zinc-100')}>{title}</span>
+      </div>
+      <p className={cn('text-[11px] leading-snug', disabled ? 'text-zinc-700' : 'text-zinc-500')}>
+        {disabled && disabledHint ? disabledHint : description}
+      </p>
+    </button>
+  )
+}
+
+function DeviceSubPicker({
+  devices,
+  selectedId,
+  onChange,
+}: {
+  devices: AudioDevice[]
+  selectedId: string
+  onChange: (id: string) => void
+}) {
+  return (
+    <Select value={selectedId} onValueChange={onChange}>
+      <SelectTrigger className="h-8 text-xs">
+        <SelectValue placeholder="Select a device…" />
+      </SelectTrigger>
+      <SelectContent>
+        {devices.map((d) => (
+          <SelectItem key={d.id} value={d.id}>
+            {d.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -297,7 +405,7 @@ function OutputStep({ settings, save, onComplete, onBack }: OutputStepProps) {
           <h2 className="text-sm font-semibold text-zinc-100">Save Location</h2>
         </div>
         <p className="text-xs text-zinc-500 leading-relaxed">
-          Recordings will be saved here with artist and track name as the file name.
+          Autotape saves recordings here, named after artist and track.
         </p>
       </div>
 
@@ -325,8 +433,8 @@ function OutputStep({ settings, save, onComplete, onBack }: OutputStepProps) {
       </div>
 
       <div className="rounded-xl px-4 py-3 text-[11px] text-zinc-500 leading-relaxed mt-auto bg-zinc-800 border border-zinc-700">
-        Recordings are saved as MP3 (or WAV) files. Metadata — title, artist, album, and album art
-        — is embedded when the source app reports it. You can change the format in Settings at any time.
+        Autotape saves recordings as MP3 or WAV, embedding title, artist, album, and art when the
+        source app reports them. Change the format anytime in Settings.
       </div>
 
       <NavRow

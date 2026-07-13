@@ -15,10 +15,45 @@ function formatDuration(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-function StatusIcon({ status }: { status: RecordingEntry['status'] }) {
-  if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-  if (status === 'error') return <XCircle className="w-4 h-4 text-[var(--rec-500)] shrink-0" />
-  return <SkipForward className="w-4 h-4 text-zinc-500 shrink-0" />
+function StatusBadge({ entry }: { entry: RecordingEntry }) {
+  if (entry.status === 'ok') {
+    return (
+      <span className="flex items-center gap-1.5 rounded-full bg-zinc-800/70 ring-1 ring-zinc-700/50 pl-1.5 pr-2 py-0.5 shrink-0">
+        <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+        {entry.durationSec > 0 && (
+          <span className="text-[11px] text-zinc-400 font-mono tabular-nums whitespace-nowrap">
+            {formatDuration(entry.durationSec)}
+          </span>
+        )}
+      </span>
+    )
+  }
+
+  if (entry.status === 'error') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1.5 rounded-full bg-(--rec-500)/10 ring-1 ring-(--rec-500)/30 pl-1.5 pr-2 py-0.5 cursor-default shrink-0">
+            <XCircle className="w-3.5 h-3.5 text-(--rec-500) shrink-0" />
+            <span className="text-[11px] text-(--rec-500) whitespace-nowrap">error</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="select-text">{entry.error}</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex items-center gap-1.5 rounded-full bg-zinc-800/50 ring-1 ring-zinc-700/40 pl-1.5 pr-2 py-0.5 cursor-default shrink-0">
+          <SkipForward className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+          <span className="text-[11px] text-zinc-500 whitespace-nowrap">skipped</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="select-text">{entry.error || 'Skipped'}</TooltipContent>
+    </Tooltip>
+  )
 }
 
 function RecordingThumb({ entry }: { entry: RecordingEntry }) {
@@ -34,7 +69,7 @@ function RecordingThumb({ entry }: { entry: RecordingEntry }) {
   }, [entry.albumArtFile])
 
   if (!src || imageError) {
-    return <Music2 className="w-4 h-4 text-zinc-500" />
+    return <Music2 className="w-4 h-4 text-amber-400/70" />
   }
 
   return (
@@ -70,79 +105,68 @@ export function RecordingLog({ entries, onTrimEntry }: RecordingLogProps) {
     )
   }
 
+  const reversed = [...entries].reverse()
+
   return (
     <ScrollArea className="h-full">
-      <div className="flex flex-col py-1 px-2">
-        {[...entries].reverse().map((entry) => (
+      <div className="flex flex-col gap-1.5 py-1 px-2">
+        {reversed.map((entry, i) => (
           <div
             key={entry.id}
-            className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-zinc-800/45 transition-colors group animate-[entry-in_0.2s_ease_forwards] overflow-hidden"
+            className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 bg-zinc-800/25 ring-1 ring-zinc-800/70 hover:ring-amber-500/40 hover:bg-zinc-800/45 transition-all group animate-[entry-in_0.2s_ease_forwards] overflow-hidden"
           >
             {/* Left accent bar */}
-            <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-transparent group-hover:bg-amber-500/50 transition-colors" />
+            <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-transparent group-hover:bg-amber-500/60 transition-colors" />
 
-            <div className="w-9 h-9 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40">
+            <span className="w-4 shrink-0 text-[10px] font-mono text-zinc-600 text-right tabular-nums">
+              {reversed.length - i}
+            </span>
+
+            <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 flex items-center justify-center ring-1 ring-zinc-700/50 bg-linear-to-br from-amber-500/15 to-zinc-800 shadow-sm">
               <RecordingThumb entry={entry} />
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-medium text-zinc-200 truncate leading-snug">
+              <p className="text-[13px] font-semibold text-zinc-100 truncate leading-snug">
                 {entry.title || 'Unknown'}
               </p>
               <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5">{entry.artist}</p>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <StatusIcon status={entry.status} />
-              {entry.status === 'ok' && entry.durationSec > 0 && (
-                <span className="text-[11px] text-zinc-500 font-mono tabular-nums">
-                  {formatDuration(entry.durationSec)}
-                </span>
-              )}
-              {entry.status === 'skipped' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-[11px] text-zinc-600 tracking-wide truncate max-w-20 cursor-default">skipped</span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="select-text">{entry.error || 'Skipped'}</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.status === 'error' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-[11px] text-[var(--rec-500)] truncate max-w-20 cursor-default">error</span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="select-text">{entry.error}</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.filePath && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-amber-400"
-                      onClick={() => onTrimEntry(entry)}
-                      aria-label="Trim recording"
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">Trim recording</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.filePath && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
-                      onClick={() => window.electronAPI.openPath(entry.filePath)}
-                      aria-label="Open file location"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">Open file location</TooltipContent>
-                </Tooltip>
-              )}
+              <div className="w-20 flex justify-end">
+                <StatusBadge entry={entry} />
+              </div>
+              <div className="w-9.5 flex items-center justify-end gap-2">
+                {entry.filePath && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-amber-400"
+                        onClick={() => onTrimEntry(entry)}
+                        aria-label="Trim recording"
+                      >
+                        <Scissors className="w-3.5 h-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Trim recording</TooltipContent>
+                  </Tooltip>
+                )}
+                {entry.filePath && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
+                        onClick={() => window.electronAPI.openPath(entry.filePath)}
+                        aria-label="Open file location"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Open file location</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             </div>
           </div>
         ))}
