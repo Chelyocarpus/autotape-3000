@@ -65,6 +65,10 @@ vi.mock('../TrimPresetsStore', () => ({
   getTrimPreset: vi.fn(() => null)
 }))
 
+vi.mock('../LosslessSourceCache', () => ({
+  LosslessSourceCache: { register: vi.fn(), get: vi.fn(() => null) }
+}))
+
 vi.mock('fs', () => {
   const renameSync = vi.fn()
   const unlinkSync = vi.fn()
@@ -73,6 +77,7 @@ vi.mock('fs', () => {
 
 import { unlinkSync } from 'fs'
 import { AudioRecorder } from '../AudioRecorder'
+import { LosslessSourceCache } from '../LosslessSourceCache'
 import { resolveOutputPath } from '../FileManager'
 import { TrackSplitter } from '../TrackSplitter'
 
@@ -134,6 +139,7 @@ describe('TrackSplitter', () => {
       ({ outputDir, artist, title, format }) => `${outputDir}\\${artist} - ${title}.${format}`
     )
     vi.mocked(unlinkSync).mockClear()
+    vi.mocked(LosslessSourceCache.register).mockClear()
   })
 
   afterEach(() => {
@@ -322,5 +328,60 @@ describe('TrackSplitter', () => {
     expect(activeRecorder.stopCalls).toEqual([{ fast: false }])
     expect(finished).toHaveLength(1)
     expect(finished[0]).toMatchObject({ title: 'Song A', status: 'ok' })
+  })
+
+  it('registers the lossless source cache instead of deleting the temp WAV on a successful mp3 save', async () => {
+    const T0 = 6_000_000
+    vi.setSystemTime(T0)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const finished: RecordingEntry[] = []
+    splitter.on('recordingFinished', (e) => finished.push(e))
+
+    splitter.startListening(makeSettings())
+    const songA = track({ artist: 'Artist A', title: 'Song A', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+    await flush()
+
+    vi.setSystemTime(T0 + 3_000)
+    const songB = track({ artist: 'Artist B', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    expect(finished).toHaveLength(1)
+    expect(finished[0]).toMatchObject({ title: 'Song A', status: 'ok' })
+    expect(unlinkSync).not.toHaveBeenCalled()
+    expect(LosslessSourceCache.register).toHaveBeenCalledTimes(1)
+    const [registeredMp3Path, registeredTmpWav] = vi.mocked(LosslessSourceCache.register).mock.calls[0]
+    expect(registeredMp3Path).toBe(finished[0].filePath)
+    expect(registeredTmpWav).toContain('C:\\tmp\\rec-')
+  })
+
+  it('still deletes the temp WAV immediately on an mp3 encode failure, without registering the lossless source cache', async () => {
+    FakeRecorder.encodeToMp3.mockRejectedValueOnce(new Error('ffmpeg exploded'))
+
+    const T0 = 6_500_000
+    vi.setSystemTime(T0)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const finished: RecordingEntry[] = []
+    splitter.on('recordingFinished', (e) => finished.push(e))
+
+    splitter.startListening(makeSettings())
+    const songA = track({ artist: 'Artist A', title: 'Song A', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+    await flush()
+
+    vi.setSystemTime(T0 + 3_000)
+    const songB = track({ artist: 'Artist B', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    expect(finished).toHaveLength(1)
+    expect(finished[0]).toMatchObject({ title: 'Song A', status: 'error' })
+    expect(unlinkSync).toHaveBeenCalled()
+    expect(LosslessSourceCache.register).not.toHaveBeenCalled()
   })
 })

@@ -96,5 +96,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('trim:save-preset', artist, title, startOffsetSec, endOffsetSec) as Promise<void>,
 
   trimDeletePreset: (artist: string, title: string) =>
-    ipcRenderer.invoke('trim:delete-preset', artist, title) as Promise<void>
+    ipcRenderer.invoke('trim:delete-preset', artist, title) as Promise<void>,
+
+  trimHasLosslessSource: (filePath: string) =>
+    ipcRenderer.invoke('trim:has-lossless-source', filePath) as Promise<boolean>,
+
+  // Raw audio bytes for the trim preview's waveform decode (see main/index.ts
+  // for why this goes over IPC instead of fetch() against autotape-audio://).
+  readAudioFile: (filePath: string) =>
+    ipcRenderer.invoke('audio:read-file', filePath) as Promise<Uint8Array>
 })

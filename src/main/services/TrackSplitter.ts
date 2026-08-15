@@ -3,6 +3,7 @@ import { renameSync, unlinkSync } from 'fs'
 import { powerSaveBlocker } from 'electron'
 import type { GsmtcService, GsmtcTrack } from './GsmtcService'
 import { AudioRecorder } from './AudioRecorder'
+import { LosslessSourceCache } from './LosslessSourceCache'
 import { resolveOutputPath, swapExtension, type DuplicateAction, type MediaFormat } from './FileManager'
 import { writeId3Tags } from './MetadataTagger'
 import { getTrimPreset } from './TrimPresetsStore'
@@ -716,7 +717,7 @@ export class TrackSplitter extends EventEmitter {
         const mp3Path = swapExtension(outputPath, 'mp3')
         try {
           await AudioRecorder.encodeToMp3(tmpWav, mp3Path, settings.bitrate, trimSec, maxDurationSec)
-          try { unlinkSync(tmpWav) } catch { /* ignore */ }
+          LosslessSourceCache.register(mp3Path, tmpWav)
           await writeId3Tags(mp3Path, track)
           this.emit('recordingFinished', {
             id: `${Date.now()}`,
