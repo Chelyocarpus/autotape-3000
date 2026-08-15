@@ -257,6 +257,16 @@ export class TrackSplitter extends EventEmitter {
     }
   }
 
+  /**
+   * Robustness / pitfalls guarded against:
+   * - A graceful `_recorder.stop()` keeps `isRunning` true until ffmpeg's
+   *   process actually exits (up to ~500ms after `stop()` is called — see
+   *   AudioRecorder.stop). A resume that lands in that window must not be
+   *   dropped just because `isRunning` is still (briefly) true: we wait for
+   *   the in-flight stop to fully settle, then re-read live GSMTC/active
+   *   state (not the possibly-stale `isPlaying`/track captured before the
+   *   wait) before deciding whether to start.
+   */
   private _onPlayStateChanged = async (isPlaying: boolean): Promise<void> => {
     if (!this._active) return
     log(`[Splitter] playStateChanged → ${isPlaying} recorderRunning=${this._recorder.isRunning}`)
@@ -270,16 +280,21 @@ export class TrackSplitter extends EventEmitter {
 
     if (!isPlaying) {
       await this._stopRecording()
-    } else {
-      if (t.title && !this._recorder.isRunning) {
-        log(`[Splitter] playStateChanged: resuming recording for "${t.title}"`)
-        this._startRecording(t)
-      } else {
-        log(`[Splitter] playStateChanged: not starting — title="${t.title}" recorderRunning=${this._recorder.isRunning}`)
-      }
-      // Ensure a warm recorder is primed after playback resumes.
-      this._startWarmRecorder()
+      return
     }
+
+    while (this._stopInFlight) {
+      await this._stopInFlight
+    }
+    const live = this._gsmtc.currentTrack
+    if (this._active && live.isPlaying && this._matchesSelectedSource(live) && live.title && !this._recorder.isRunning) {
+      log(`[Splitter] playStateChanged: resuming recording for "${live.title}"`)
+      this._startRecording(live)
+    } else {
+      log(`[Splitter] playStateChanged: not starting — title="${live.title}" isPlaying=${live.isPlaying} recorderRunning=${this._recorder.isRunning}`)
+    }
+    // Ensure a warm recorder is primed after playback resumes.
+    this._startWarmRecorder()
   }
 
   private _startRecording(track: GsmtcTrack): void {
@@ -621,6 +636,14 @@ export class TrackSplitter extends EventEmitter {
     }
   }
 
+  /**
+   * Robustness / pitfalls guarded against:
+   * - The minSaveSeconds check compares against `maxDurationSec` (the
+   *   unrounded, trim-preset-adjusted precise duration), never the rounded
+   *   `durationSec`. Rounding before comparing lets a recording that's
+   *   actually shorter than the minimum (e.g. 4.501s against a 5s minimum)
+   *   round up and slip past the check.
+   */
   private async _finalizeStoppedRecording(args: {
     settings: TrackSplitterSettings
     track: GsmtcTrack
@@ -660,8 +683,12 @@ export class TrackSplitter extends EventEmitter {
         ? Math.max(0, Math.floor(settings.minSaveSeconds))
         : TrackSplitter.DEFAULT_MIN_SAVE_SECONDS
 
+      // Compare against the unrounded precise duration, not the rounded
+      // durationSec — see "Robustness / pitfalls guarded against" above.
+      const preciseDurationForThreshold = maxDurationSec ?? durationSec
+
       const shouldDropPartial =
-        durationSec < minSaveSeconds
+        preciseDurationForThreshold < minSaveSeconds
 
       if (shouldDropPartial) {
         log(`[Splitter] _finalize: DISCARD — too short (${durationSec}s < ${minSaveSeconds}s) dropIfShortOnTrackChange=${dropIfShortOnTrackChange}`)

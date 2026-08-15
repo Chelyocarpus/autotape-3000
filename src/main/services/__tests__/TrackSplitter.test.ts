@@ -22,6 +22,17 @@ vi.mock('../AudioRecorder', async () => {
     static instances: FakeAudioRecorder[] = []
     static encodeToMp3 = vi.fn().mockResolvedValue(undefined)
     static trimWav = vi.fn().mockResolvedValue(undefined)
+    // When true, stop() doesn't resolve (or flip isRunning) until releaseNextStop()
+    // is called — mirrors the real AudioRecorder, where isRunning stays true from
+    // stop() until ffmpeg's process actually exits, so tests can exercise races
+    // that land in that window.
+    static manualStop = false
+    private static _pendingStopResolvers: Array<() => void> = []
+
+    static releaseNextStop(): void {
+      const fn = FakeAudioRecorder._pendingStopResolvers.shift()
+      if (fn) fn()
+    }
 
     isRunning = false
     startCalls: string[] = []
@@ -42,6 +53,14 @@ vi.mock('../AudioRecorder', async () => {
 
     stop(options?: { fast?: boolean }): Promise<string> {
       this.stopCalls.push(options)
+      if (FakeAudioRecorder.manualStop) {
+        return new Promise((resolve) => {
+          FakeAudioRecorder._pendingStopResolvers.push(() => {
+            this.isRunning = false
+            resolve(this._tmpPath)
+          })
+        })
+      }
       this.isRunning = false
       return Promise.resolve(this._tmpPath)
     }
@@ -80,6 +99,8 @@ type FakeAudioRecorderCtor = typeof AudioRecorder & {
   instances: Array<{ isRunning: boolean; startCalls: string[]; stopCalls: Array<{ fast?: boolean } | undefined> }>
   encodeToMp3: ReturnType<typeof vi.fn>
   trimWav: ReturnType<typeof vi.fn>
+  manualStop: boolean
+  releaseNextStop: () => void
 }
 
 const FakeRecorder = AudioRecorder as unknown as FakeAudioRecorderCtor
@@ -129,6 +150,7 @@ describe('TrackSplitter', () => {
     FakeRecorder.instances.length = 0
     FakeRecorder.encodeToMp3.mockClear()
     FakeRecorder.trimWav.mockClear()
+    FakeRecorder.manualStop = false
     vi.mocked(resolveOutputPath).mockClear()
     vi.mocked(resolveOutputPath).mockImplementation(
       ({ outputDir, artist, title, format }) => `${outputDir}\\${artist} - ${title}.${format}`
@@ -222,6 +244,77 @@ describe('TrackSplitter', () => {
     expect(finished[0]).toMatchObject({ title: 'Short Song', status: 'skipped' })
     expect(finished[0].error).toMatch(/track change/i)
     expect(unlinkSync).toHaveBeenCalled()
+  })
+
+  it('drops a recording that rounds up to the minimum but is actually shorter (false-precision guard)', async () => {
+    const T0 = 3_000_000
+    vi.setSystemTime(T0)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const finished: RecordingEntry[] = []
+    splitter.on('recordingFinished', (e) => finished.push(e))
+
+    splitter.startListening(makeSettings({ minSaveSeconds: 5 }))
+
+    const songA = track({ artist: 'A', title: 'Almost Long Enough', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+    await flush()
+
+    // Song B arrives after 4.501s — Math.round(4.501) is 5, which would wrongly pass a
+    // `5 < 5` check against the rounded duration. The unrounded 4.501s is still below
+    // the 5s minimum and must be dropped.
+    vi.setSystemTime(T0 + 4_501)
+    const songB = track({ artist: 'B', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    expect(FakeRecorder.encodeToMp3).not.toHaveBeenCalled()
+    expect(finished).toHaveLength(1)
+    expect(finished[0]).toMatchObject({ title: 'Almost Long Enough', status: 'skipped' })
+    expect(unlinkSync).toHaveBeenCalled()
+  })
+
+  it('does not drop a resume that races a graceful stop still closing ffmpeg', async () => {
+    const T0 = 5_000_000
+    vi.setSystemTime(T0)
+
+    // Track already playing when listening starts, so _startRecording runs immediately
+    // against the base recorder (no warm-recorder promotion involved).
+    const initialTrack = track({ artist: 'Artist', title: 'Song A', positionMs: 0, isPlaying: true })
+    const gsmtc = new FakeGsmtc(initialTrack)
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const started: GsmtcTrack[] = []
+    splitter.on('recordingStarted', (t) => started.push(t))
+
+    splitter.startListening(makeSettings())
+    expect(FakeRecorder.instances[0].isRunning).toBe(true)
+    started.length = 0 // discard the initial recordingStarted from startListening() itself
+
+    // The graceful stop is put under manual control from here on, so it won't resolve
+    // (or flip isRunning) until the test explicitly releases it.
+    FakeRecorder.manualStop = true
+
+    // Pause: kicks off a graceful stop that won't settle until released below.
+    gsmtc.currentTrack = { ...initialTrack, isPlaying: false }
+    gsmtc.emit('playStateChanged', false)
+    await flush()
+    expect(FakeRecorder.instances[0].isRunning).toBe(true) // stop is still in flight
+
+    // Resume arrives while the previous stop is still closing ffmpeg — this is the
+    // race: the old code checked `!recorder.isRunning`, saw it still true, and
+    // silently dropped this resume.
+    gsmtc.currentTrack = { ...initialTrack, isPlaying: true }
+    gsmtc.emit('playStateChanged', true)
+    await flush()
+    expect(started).toHaveLength(0) // resume is waiting on the in-flight stop, not dropped
+
+    // The outgoing recorder's ffmpeg process finally exits.
+    FakeRecorder.releaseNextStop()
+    await flush()
+
+    expect(started).toEqual([{ ...initialTrack, isPlaying: true }])
+    expect(FakeRecorder.instances[0].isRunning).toBe(true)
   })
 
   it('skips starting a recording when the resolved output path is already taken (duplicate, action=skip)', () => {
