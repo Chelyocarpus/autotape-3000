@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2026-08-16
+
+### Fixed
+
+- **Trim preview showed "failed to fetch" instead of loading the waveform** — In an installed (non-dev) build, opening the trim tool to preview and trim a recording could fail immediately with a generic "failed to fetch" error instead of showing the waveform. Recordings are now read directly rather than through a fetch that could be blocked in this situation, so the trim preview loads reliably.
+
 ## [2.5.1] - 2026-08-15
+
+### Added
+
+- **Trimming a recording no longer double-compresses MP3s** — If you trim an MP3 shortly after it's recorded, Autotape now uses the original uncompressed audio behind the scenes instead of re-compressing the already-compressed file a second time, avoiding an extra generation of quality loss. The original audio is kept temporarily and cleaned up automatically after a while; if it's no longer available, trimming still works exactly as before and you'll see a warning that quality may be slightly reduced.
 
 ### Removed
 

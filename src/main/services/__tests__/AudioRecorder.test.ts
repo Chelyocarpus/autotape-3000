@@ -19,6 +19,15 @@ vi.mock('fs', () => {
   return { renameSync, default: { renameSync } }
 })
 
+const nodeId3ReadMock = vi.fn((_filePath: string) => ({ title: 'Existing Title' }))
+const nodeId3WriteMock = vi.fn((_tags: unknown, _filePath: string) => undefined)
+vi.mock('node-id3', () => ({
+  default: {
+    read: (filePath: string) => nodeId3ReadMock(filePath),
+    write: (tags: unknown, filePath: string) => nodeId3WriteMock(tags, filePath)
+  }
+}))
+
 import { renameSync } from 'fs'
 import { AudioRecorder } from '../AudioRecorder'
 
@@ -52,6 +61,8 @@ describe('AudioRecorder.retrimFile', () => {
   beforeEach(() => {
     execFileMock.mockReset()
     vi.mocked(renameSync).mockReset()
+    nodeId3ReadMock.mockClear()
+    nodeId3WriteMock.mockClear()
   })
 
   function queueProbeThenEncode(probeStderr: string): void {
@@ -104,5 +115,45 @@ describe('AudioRecorder.retrimFile', () => {
     const args = execFileMock.mock.calls[0][1] as string[]
     expect(args).toContain('-c')
     expect(args).not.toContain('-abr')
+  })
+
+  it('retrims from the provided lossless WAV source with a single-generation encode (no -i on the MP3)', async () => {
+    queueProbeThenEncode(
+      'Duration: 00:03:00.00, start: 0.000000, bitrate: 192 kb/s\n' +
+      '  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 192 kb/s'
+    )
+
+    await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_source.wav')
+
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    const encodeArgs = execFileMock.mock.calls[1][1] as string[]
+    expect(encodeArgs[encodeArgs.indexOf('-i') + 1]).toBe('C:\\Temp\\autotape_source.wav')
+    expect(encodeArgs).not.toContain('C:\\rec\\song.mp3')
+    expect(encodeArgs[encodeArgs.indexOf('-b:a') + 1]).toBe('192k')
+    expect(renameSync).toHaveBeenCalledWith('C:\\rec\\song.mp3.retrim.mp3', 'C:\\rec\\song.mp3')
+    expect(nodeId3WriteMock).toHaveBeenCalledWith({ title: 'Existing Title' }, 'C:\\rec\\song.mp3')
+  })
+
+  it('falls back to the lossy MP3 re-encode when the lossless source ffmpeg invocation fails (e.g. evicted mid-race)', async () => {
+    // Call 1: bitrate probe (resolved once, shared by both the lossless attempt and its fallback).
+    execFileMock.mockImplementationOnce((_bin: string, _args: string[], _opts: unknown, cb: ExecFileCallback) => {
+      cb(new Error('At least one output file must be specified'), '', 'Duration: 00:03:00.00, bitrate: 256 kb/s\n  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 256 kb/s')
+    })
+    // Call 2: the lossless-source encode attempt fails — e.g. the WAV was evicted mid-race.
+    execFileMock.mockImplementationOnce((_bin: string, _args: string[], _opts: unknown, cb: ExecFileCallback) => {
+      cb(new Error('ENOENT: no such file or directory'), '', '')
+    })
+    // Call 3: the fallback lossy re-encode against the still-present MP3 succeeds.
+    execFileMock.mockImplementationOnce((_bin: string, _args: string[], _opts: unknown, cb: ExecFileCallback) => {
+      cb(null)
+    })
+
+    await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_gone.wav')
+
+    expect(execFileMock).toHaveBeenCalledTimes(3)
+    const fallbackArgs = execFileMock.mock.calls[2][1] as string[]
+    expect(fallbackArgs[fallbackArgs.indexOf('-i') + 1]).toBe('C:\\rec\\song.mp3')
+    expect(fallbackArgs[fallbackArgs.indexOf('-b:a') + 1]).toBe('256k')
+    expect(renameSync).toHaveBeenCalledWith('C:\\rec\\song.mp3.retrim.mp3', 'C:\\rec\\song.mp3')
   })
 })

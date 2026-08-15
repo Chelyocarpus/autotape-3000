@@ -67,7 +67,9 @@ function makeElectronApiMock(): Window['electronAPI'] {
     trimGetPreset: () => Promise.resolve(null),
     trimGetAllPresets: () => Promise.resolve({}),
     trimSavePreset: () => Promise.resolve(),
-    trimDeletePreset: () => Promise.resolve()
+    trimDeletePreset: () => Promise.resolve(),
+    trimHasLosslessSource: () => Promise.resolve(true),
+    readAudioFile: () => Promise.resolve(new Uint8Array(8))
   }
 }
 

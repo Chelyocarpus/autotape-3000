@@ -6,6 +6,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { getFfmpegPath } from './FfmpegResolver'
 import { log } from './log'
+import NodeID3 from 'node-id3'
 
 function runFfmpegAsync(binary: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
@@ -272,34 +273,10 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
-   * Re-trim an already-saved MP3 or WAV file to the given [startSec, endSec] range.
-   * The output replaces the original file in-place.
+   * Run ffmpeg with the given args, then atomically replace filePath with the
+   * tmpPath it wrote. Shared by every retrim variant below.
    */
-  static async retrimFile(filePath: string, startSec: number, endSec: number): Promise<void> {
-    const binary = getFfmpegPath()
-    const duration = Math.max(0.1, endSec - startSec)
-    const isWav = filePath.toLowerCase().endsWith('.wav')
-    const tmpPath = `${filePath}.retrim${isWav ? '.wav' : '.mp3'}`
-
-    let args: string[]
-    if (isWav) {
-      args = [
-        '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
-        '-i', filePath, '-c', 'copy', tmpPath
-      ]
-    } else {
-      // Re-encode at the file's original bitrate rather than a fixed VBR
-      // quality, so trimming a 128kbps recording doesn't balloon it to ~245kbps.
-      const bitrate = (await AudioRecorder._probeMp3BitrateKbps(binary, filePath)) ?? 192
-      args = [
-        '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
-        '-i', filePath,
-        '-codec:a', 'libmp3lame', '-b:a', `${bitrate}k`, '-abr', '1',
-        '-map_metadata', '0', '-id3v2_version', '3',
-        tmpPath
-      ]
-    }
-
+  private static _runFfmpegAndRename(binary: string, args: string[], tmpPath: string, filePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       execFile(binary, args, { windowsHide: true, timeout: 120_000 }, (err) => {
         if (err) { reject(err); return }
@@ -311,6 +288,119 @@ export class AudioRecorder extends EventEmitter {
         }
       })
     })
+  }
+
+  private static _retrimWavFile(binary: string, filePath: string, startSec: number, endSec: number): Promise<void> {
+    const duration = Math.max(0.1, endSec - startSec)
+    const tmpPath = `${filePath}.retrim.wav`
+    const args = [
+      '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
+      '-i', filePath, '-c', 'copy', tmpPath
+    ]
+    return AudioRecorder._runFfmpegAndRename(binary, args, tmpPath, filePath)
+  }
+
+  /** Re-encode filePath itself — the lossy fallback used when there's no lossless source, or it failed. */
+  private static _retrimMp3Lossy(binary: string, filePath: string, startSec: number, endSec: number, bitrate: number): Promise<void> {
+    const duration = Math.max(0.1, endSec - startSec)
+    const tmpPath = `${filePath}.retrim.mp3`
+    const args = [
+      '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
+      '-i', filePath,
+      '-codec:a', 'libmp3lame', '-b:a', `${bitrate}k`, '-abr', '1',
+      '-map_metadata', '0', '-id3v2_version', '3',
+      tmpPath
+    ]
+    return AudioRecorder._runFfmpegAndRename(binary, args, tmpPath, filePath)
+  }
+
+  /**
+   * Re-encode from the still-lossless temp WAV instead of the already-lossy MP3 —
+   * a single-generation WAV→MP3 encode instead of a second lossy re-encode.
+   *
+   * Robustness / pitfalls guarded against:
+   * - The WAV can vanish between the caller's cache lookup and this method
+   *   actually invoking ffmpeg (LosslessSourceCache eviction race, or the file
+   *   being removed externally) — this throws on any ffmpeg/rename failure,
+   *   and retrimFile()'s caller-side try/catch falls back to _retrimMp3Lossy
+   *   so the user's trim action still succeeds rather than hard-failing.
+   * - ID3 tags (title/artist/album/art) live only in the original MP3, not the
+   *   bare WAV, so they're read before the encode and re-applied after the
+   *   rename — otherwise every lossless-source retrim would silently strip
+   *   them (the lossy path avoids this via ffmpeg's `-map_metadata 0` against
+   *   the MP3 itself, which isn't available here since the MP3 isn't an input).
+   */
+  private static async _retrimMp3FromSource(
+    binary: string,
+    filePath: string,
+    sourceWavPath: string,
+    startSec: number,
+    endSec: number,
+    bitrate: number
+  ): Promise<void> {
+    const duration = Math.max(0.1, endSec - startSec)
+    const tmpPath = `${filePath}.retrim.mp3`
+
+    let existingTags: NodeID3.Tags = {}
+    try {
+      existingTags = NodeID3.read(filePath) ?? {}
+    } catch {
+      // Original file's tags unreadable — proceed without them rather than failing the trim.
+    }
+
+    const args = [
+      '-y', '-ss', startSec.toFixed(3), '-t', duration.toFixed(3),
+      '-i', sourceWavPath,
+      '-codec:a', 'libmp3lame', '-b:a', `${bitrate}k`, '-abr', '1',
+      '-id3v2_version', '3',
+      tmpPath
+    ]
+    await AudioRecorder._runFfmpegAndRename(binary, args, tmpPath, filePath)
+
+    try {
+      NodeID3.write(existingTags, filePath)
+    } catch {
+      // Best-effort — the audio trim already succeeded; losing tags here shouldn't fail the operation.
+    }
+  }
+
+  /**
+   * Re-trim an already-saved MP3 or WAV file to the given [startSec, endSec] range.
+   * The output replaces the original file in-place.
+   *
+   * `losslessSourcePath`, when given (MP3 files only — WAV output is already
+   * lossless), points at the still-uncompressed temp WAV captured before the
+   * original MP3 encode, letting this do a single-generation re-encode instead
+   * of decoding-then-re-encoding the already-lossy MP3 a second time.
+   */
+  static async retrimFile(
+    filePath: string,
+    startSec: number,
+    endSec: number,
+    losslessSourcePath?: string | null
+  ): Promise<void> {
+    const binary = getFfmpegPath()
+    const isWav = filePath.toLowerCase().endsWith('.wav')
+
+    if (isWav) {
+      return AudioRecorder._retrimWavFile(binary, filePath, startSec, endSec)
+    }
+
+    // Re-encode at the file's original bitrate rather than a fixed VBR quality,
+    // so trimming a 128kbps recording doesn't balloon it to ~245kbps. Resolved
+    // once up front so both the lossless attempt and its lossy fallback agree.
+    const bitrate = (await AudioRecorder._probeMp3BitrateKbps(binary, filePath)) ?? 192
+
+    if (losslessSourcePath) {
+      try {
+        await AudioRecorder._retrimMp3FromSource(binary, filePath, losslessSourcePath, startSec, endSec, bitrate)
+        return
+      } catch (err) {
+        log(`[AudioRecorder] retrim from lossless source failed, falling back to lossy re-encode: ${(err as Error).message}`)
+      }
+    }
+
+    return AudioRecorder._retrimMp3Lossy(binary, filePath, startSec, endSec, bitrate)
   }
 
   /**

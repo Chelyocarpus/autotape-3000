@@ -1,11 +1,13 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, nativeTheme, Notification } from 'electron'
-import { join } from 'path'
+import { join, extname } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { GsmtcService } from './services/GsmtcService'
 import { TrackSplitter } from './services/TrackSplitter'
 import { AudioRecorder } from './services/AudioRecorder'
+import { LosslessSourceCache, sweepOrphanedLosslessSources } from './services/LosslessSourceCache'
 import { listAudioDevices } from './services/AudioDevices'
 import { loadSettings, saveSettings } from './services/SettingsStore'
 import { setFfmpegOverride, detectFfmpegPath, getFfmpegPath } from './services/FfmpegResolver'
@@ -393,10 +395,33 @@ function registerIpcHandlers(): void {
 
   // ─── Trim / preset handlers ─────────────────────────────────────────────
 
-  // Apply a trim in-place to an already-saved file: re-encodes from startSec to endSec
+  // Read an audio file's raw bytes for the trim preview's waveform decode.
+  // The renderer can't fetch() the autotape-audio:// protocol directly in a
+  // packaged build: Chromium hard-blocks fetch() from a file:// origin (which
+  // is what mainWindow.loadFile() produces) to any non-http(s)/data/chrome
+  // scheme, regardless of registerSchemesAsPrivileged — so this goes over the
+  // same IPC channel every other main<->renderer data transfer already uses.
+  const READABLE_AUDIO_EXTENSIONS = new Set(['.mp3', '.wav'])
+  ipcMain.handle('audio:read-file', async (_event, filePath: string) => {
+    if (!READABLE_AUDIO_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+      throw new Error('Unsupported file type')
+    }
+    return new Uint8Array(await readFile(filePath))
+  })
+
+  // Apply a trim in-place to an already-saved file: re-encodes from startSec to endSec.
+  // Passes the retained lossless source WAV (if any) so an MP3 retrim shortly after
+  // recording avoids a second lossy generation.
   ipcMain.handle('trim:apply', async (_event, filePath: string, startSec: number, endSec: number) => {
-    await AudioRecorder.retrimFile(filePath, startSec, endSec)
+    const losslessSource = LosslessSourceCache.get(filePath)
+    await AudioRecorder.retrimFile(filePath, startSec, endSec, losslessSource)
     return { durationSec: Math.round(endSec - startSec) }
+  })
+
+  // Whether a lossless source WAV is still retained for this output path — used by
+  // SongTrimModal to warn the user before a trim falls back to a lossy re-encode.
+  ipcMain.handle('trim:has-lossless-source', (_event, filePath: string) => {
+    return LosslessSourceCache.get(filePath) !== null
   })
 
   // Retrieve the preset saved for a given artist+title (or global)
@@ -425,6 +450,7 @@ function registerIpcHandlers(): void {
 
 // ─── App lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  sweepOrphanedLosslessSources()
   electronApp.setAppUserModelId('com.autotape3000.app')
   registerArtProtocol()
 

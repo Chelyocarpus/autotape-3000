@@ -53,6 +53,8 @@ declare global {
       trimGetAllPresets: () => Promise<Record<string, { startOffsetSec: number; endOffsetSec: number }>>
       trimSavePreset: (artist: string, title: string | null, startOffsetSec: number, endOffsetSec: number) => Promise<void>
       trimDeletePreset: (artist: string, title: string) => Promise<void>
+      trimHasLosslessSource: (filePath: string) => Promise<boolean>
+      readAudioFile: (filePath: string) => Promise<Uint8Array>
     }
   }
 }
