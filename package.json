@@ -1,6 +1,6 @@
 {
   "name": "autotape3000",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Record system audio per-track using GSMTC",
   "main": "./out/main/index.js",
   "author": "autotape3000",
@@ -58,7 +58,7 @@
     "sharp": "^0.34.5",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3",
-    "vite": "^8.1.3",
+    "vite": "^7.3.6",
     "vitest": "^4.1.9"
   },
   "pnpm": {
