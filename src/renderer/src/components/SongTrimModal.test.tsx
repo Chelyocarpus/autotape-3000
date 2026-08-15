@@ -4,7 +4,7 @@ import { SongTrimModal } from './SongTrimModal'
 import type { RecordingEntry } from '../types'
 
 // jsdom implements neither the Web Audio API nor <canvas> 2D contexts. This
-// component's only non-UI work is "fetch the file, decode it, draw a
+// component's only non-UI work is "read the file over IPC, decode it, draw a
 // waveform" — stub just enough of that pipeline for it to resolve without
 // asserting on pixel output (the canvas.getContext('2d') call intentionally
 // returns null in jsdom, and drawWaveform() already no-ops on that).
@@ -49,9 +49,7 @@ const entry: RecordingEntry = {
 describe('SongTrimModal', () => {
   beforeEach(() => {
     vi.stubGlobal('AudioContext', FakeAudioContext)
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8))
-    })))
+    window.electronAPI.readAudioFile = vi.fn(() => Promise.resolve(new Uint8Array(8)))
   })
 
   afterEach(() => {
@@ -76,8 +74,24 @@ describe('SongTrimModal', () => {
   })
 
   it('shows a load error instead of crashing when decoding fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('ENOENT: file not found'))))
+    window.electronAPI.readAudioFile = vi.fn(() => Promise.reject(new Error('ENOENT: file not found')))
     render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
     expect(await screen.findByText(/file not found/i)).toBeInTheDocument()
+  })
+
+  it('shows a persistent warning banner when the MP3 lossless source is unavailable', async () => {
+    window.electronAPI.trimHasLosslessSource = vi.fn(() => Promise.resolve(false))
+    render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+    expect(await screen.findByText(/original recording no longer available/i)).toBeInTheDocument()
+  })
+
+  it('does not check or show the warning banner for a WAV entry (already lossless)', async () => {
+    const checkMock = vi.fn(() => Promise.resolve(false))
+    window.electronAPI.trimHasLosslessSource = checkMock
+    const wavEntry = { ...entry, filePath: entry.filePath.replace(/\.mp3$/, '.wav') }
+    render(<SongTrimModal entry={wavEntry} onClose={vi.fn()} onSaved={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /save trimmed file/i })).toBeEnabled())
+    expect(checkMock).not.toHaveBeenCalled()
+    expect(screen.queryByText(/original recording no longer available/i)).not.toBeInTheDocument()
   })
 })

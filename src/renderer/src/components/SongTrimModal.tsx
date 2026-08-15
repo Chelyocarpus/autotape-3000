@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   X, Play, Square, Music2, Scissors, BookmarkCheck, BookmarkX, Loader2,
-  ZoomIn, ZoomOut, Maximize2
+  ZoomIn, ZoomOut, Maximize2, AlertTriangle
 } from 'lucide-react'
 import { Button } from './ui/button'
 import type { RecordingEntry } from '../types'
@@ -27,10 +27,6 @@ function formatTime(sec: number): string {
 function formatOffset(sec: number, sign: '+' | '-'): string {
   if (!isFinite(sec) || Math.abs(sec) < 0.001) return ''
   return `${sign}${Math.abs(sec).toFixed(3)}s`
-}
-
-function buildAudioUrl(filePath: string): string {
-  return `autotape-audio://file?path=${encodeURIComponent(filePath)}`
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -163,6 +159,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const [saveAsPreset, setSaveAsPreset] = useState(false)
   const [applyToAllSongs, setApplyToAllSongs] = useState(false)
   const [existingPreset, setExistingPreset] = useState<{ startOffsetSec: number; endOffsetSec: number } | null>(null)
+  const [hasLosslessSource, setHasLosslessSource] = useState(true)
   const [isDark] = useState(() => document.documentElement.getAttribute('data-theme') !== 'light')
 
   // Zoom state: zoom ≥ 1, viewOffset is the normalised left edge of the view window
@@ -188,6 +185,20 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
       .catch(() => {})
   }, [entry.artist, entry.title])
 
+  // ─── Check lossless-source availability (MP3 only — WAV is already lossless) ──
+  useEffect(() => {
+    const isMp3 = entry.filePath.toLowerCase().endsWith('.mp3')
+    if (!isMp3) {
+      setHasLosslessSource(true)
+      return
+    }
+    let mounted = true
+    window.electronAPI.trimHasLosslessSource(entry.filePath)
+      .then((has) => { if (mounted) setHasLosslessSource(has) })
+      .catch(() => { if (mounted) setHasLosslessSource(true) })
+    return () => { mounted = false }
+  }, [entry.filePath])
+
   // ─── Decode audio ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!entry.filePath) {
@@ -200,12 +211,11 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     setIsLoading(true)
     setLoadError(null)
 
-    fetch(buildAudioUrl(entry.filePath), { signal: abortCtrl.signal })
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
+    window.electronAPI.readAudioFile(entry.filePath)
+      .then((bytes) => {
         const ctx = new AudioContext()
         audioCtxRef.current = ctx
-        return ctx.decodeAudioData(buf)
+        return ctx.decodeAudioData(bytes.buffer as ArrayBuffer)
       })
       .then((decoded) => {
         if (abortCtrl.signal.aborted) return
@@ -509,6 +519,13 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
             </div>
           )}
         </div>
+
+        {!hasLosslessSource && (
+          <div className="mx-5 mt-3 flex items-start gap-2 rounded-md border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>Original recording no longer available — trimming will re-compress this MP3, reducing quality.</span>
+          </div>
+        )}
 
         {/* ── Waveform ── */}
         <div className="px-5 pt-4 pb-1">
