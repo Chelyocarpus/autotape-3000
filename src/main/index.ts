@@ -414,7 +414,13 @@ function registerIpcHandlers(): void {
   // recording avoids a second lossy generation.
   ipcMain.handle('trim:apply', async (_event, filePath: string, startSec: number, endSec: number) => {
     const losslessSource = LosslessSourceCache.get(filePath)
-    await AudioRecorder.retrimFile(filePath, startSec, endSec, losslessSource)
+    const { usedLosslessSource } = await AudioRecorder.retrimFile(filePath, startSec, endSec, losslessSource)
+    if (losslessSource && !usedLosslessSource) {
+      // A source was retained but retrimFile couldn't use it (e.g. evicted mid-race,
+      // or otherwise unreadable) — drop the now-known-bad entry so a later trim on
+      // this file doesn't keep retrying (and re-logging) the same failure.
+      LosslessSourceCache.evict(filePath)
+    }
     return { durationSec: Math.round(endSec - startSec) }
   })
 

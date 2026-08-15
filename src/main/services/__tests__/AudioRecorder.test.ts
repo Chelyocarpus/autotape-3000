@@ -19,12 +19,16 @@ vi.mock('fs', () => {
   return { renameSync, default: { renameSync } }
 })
 
-const nodeId3ReadMock = vi.fn((_filePath: string) => ({ title: 'Existing Title' }))
-const nodeId3WriteMock = vi.fn((_tags: unknown, _filePath: string) => undefined)
+// AudioRecorder uses NodeID3.Promise.read/write (not the sync read/write) so
+// tag I/O doesn't block the main process — mock only the Promise namespace.
+const nodeId3ReadMock = vi.fn((_filePath: string) => Promise.resolve({ title: 'Existing Title' }))
+const nodeId3WriteMock = vi.fn((_tags: unknown, _filePath: string) => Promise.resolve(true))
 vi.mock('node-id3', () => ({
   default: {
-    read: (filePath: string) => nodeId3ReadMock(filePath),
-    write: (tags: unknown, filePath: string) => nodeId3WriteMock(tags, filePath)
+    Promise: {
+      read: (filePath: string) => nodeId3ReadMock(filePath),
+      write: (tags: unknown, filePath: string) => nodeId3WriteMock(tags, filePath)
+    }
   }
 }))
 
@@ -123,8 +127,9 @@ describe('AudioRecorder.retrimFile', () => {
       '  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 192 kb/s'
     )
 
-    await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_source.wav')
+    const result = await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_source.wav')
 
+    expect(result).toEqual({ usedLosslessSource: true })
     expect(execFileMock).toHaveBeenCalledTimes(2)
     const encodeArgs = execFileMock.mock.calls[1][1] as string[]
     expect(encodeArgs[encodeArgs.indexOf('-i') + 1]).toBe('C:\\Temp\\autotape_source.wav')
@@ -132,6 +137,37 @@ describe('AudioRecorder.retrimFile', () => {
     expect(encodeArgs[encodeArgs.indexOf('-b:a') + 1]).toBe('192k')
     expect(renameSync).toHaveBeenCalledWith('C:\\rec\\song.mp3.retrim.mp3', 'C:\\rec\\song.mp3')
     expect(nodeId3WriteMock).toHaveBeenCalledWith({ title: 'Existing Title' }, 'C:\\rec\\song.mp3')
+  })
+
+  it('still retrims successfully if ID3 tags cannot be read from the source file', async () => {
+    queueProbeThenEncode(
+      'Duration: 00:03:00.00, start: 0.000000, bitrate: 192 kb/s\n' +
+      '  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 192 kb/s'
+    )
+    nodeId3ReadMock.mockRejectedValueOnce(new Error('failed to read ID3 tags'))
+
+    const result = await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_source.wav')
+
+    expect(result).toEqual({ usedLosslessSource: true })
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    // Read failed, so existingTags stays {} — the write still happens (best-effort)
+    // with whatever tags we had, rather than skipping it and silently doing nothing.
+    expect(nodeId3WriteMock).toHaveBeenCalledWith({}, 'C:\\rec\\song.mp3')
+  })
+
+  it('still retrims successfully if writing ID3 tags to the retrimmed file fails', async () => {
+    queueProbeThenEncode(
+      'Duration: 00:03:00.00, start: 0.000000, bitrate: 192 kb/s\n' +
+      '  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 192 kb/s'
+    )
+    nodeId3WriteMock.mockRejectedValueOnce(new Error('failed to write ID3 tags'))
+
+    const result = await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_source.wav')
+
+    // The audio trim itself must not fail just because the best-effort tag write did.
+    expect(result).toEqual({ usedLosslessSource: true })
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    expect(nodeId3WriteMock).toHaveBeenCalledTimes(1)
   })
 
   it('falls back to the lossy MP3 re-encode when the lossless source ffmpeg invocation fails (e.g. evicted mid-race)', async () => {
@@ -148,8 +184,9 @@ describe('AudioRecorder.retrimFile', () => {
       cb(null)
     })
 
-    await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_gone.wav')
+    const result = await AudioRecorder.retrimFile('C:\\rec\\song.mp3', 1, 5, 'C:\\Temp\\autotape_gone.wav')
 
+    expect(result).toEqual({ usedLosslessSource: false })
     expect(execFileMock).toHaveBeenCalledTimes(3)
     const fallbackArgs = execFileMock.mock.calls[2][1] as string[]
     expect(fallbackArgs[fallbackArgs.indexOf('-i') + 1]).toBe('C:\\rec\\song.mp3')

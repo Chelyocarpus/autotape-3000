@@ -1,4 +1,4 @@
-import { readdirSync, unlinkSync } from 'fs'
+import { existsSync, readdirSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { log } from './log'
@@ -22,13 +22,19 @@ export const MAX_RETAINED_SOURCES = 12
  * Robustness / pitfalls guarded against:
  * - Re-registering the same output path (e.g. a rare finalize collision)
  *   deletes the previous entry's now-orphaned file before overwriting it,
- *   instead of leaking it untracked on disk.
+ *   instead of leaking it untracked on disk. Re-registering with the SAME
+ *   tmpWavPath is a no-op delete-wise — it would otherwise unlink the file
+ *   out from under the very entry being (re-)registered.
  * - Eviction and re-registration deletes are both best-effort: the underlying
  *   file may already be gone (deleted externally, or a double-eviction race)
  *   — unlinkSync failures are swallowed so one missing file never blocks a
  *   new recording from finalizing.
  * - Eviction runs in a loop bounded by strictly decreasing map size (not an
  *   unbounded scan), so a pathological cap value can't cause runaway cost.
+ * - get() verifies the file still exists before returning it, self-healing
+ *   the map if it was deleted externally (outside register()/evict()'s own
+ *   bookkeeping) — otherwise a caller could be told a lossless source is
+ *   available when reading it would actually fail.
  */
 export class LosslessSourceCache {
   private static _map = new Map<string, string>()
@@ -55,8 +61,29 @@ export class LosslessSourceCache {
     }
   }
 
+  /**
+   * Returns the retained temp WAV path, or null if none is retained — or if
+   * one was retained but its file no longer exists on disk (in which case
+   * the stale mapping is dropped so future calls don't keep reporting it).
+   */
   static get(outputFilePath: string): string | null {
-    return LosslessSourceCache._map.get(outputFilePath) ?? null
+    const tmpWavPath = LosslessSourceCache._map.get(outputFilePath)
+    if (tmpWavPath === undefined) return null
+    if (!existsSync(tmpWavPath)) {
+      LosslessSourceCache._map.delete(outputFilePath)
+      return null
+    }
+    return tmpWavPath
+  }
+
+  /**
+   * Removes the cache entry WITHOUT deleting its file — for when a caller
+   * (e.g. a failed lossless-source retrim) determines the entry is no longer
+   * usable but the underlying file's actual state is unknown/irrelevant to
+   * the caller, so forcibly deleting it here would be presumptuous.
+   */
+  static evict(outputFilePath: string): void {
+    LosslessSourceCache._map.delete(outputFilePath)
   }
 }
 

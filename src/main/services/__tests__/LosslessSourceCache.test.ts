@@ -65,9 +65,53 @@ describe('LosslessSourceCache', () => {
     expect(LosslessSourceCache.get('C:\\out\\song.mp3')).toBe(second)
   })
 
+  it('does not delete the file when the same output path is re-registered with the SAME source', async () => {
+    const { LosslessSourceCache } = await import('../LosslessSourceCache')
+    const wav = join(testTmpDir, 'autotape_same.wav')
+    writeFileSync(wav, 'x')
+
+    LosslessSourceCache.register('C:\\out\\song.mp3', wav)
+    LosslessSourceCache.register('C:\\out\\song.mp3', wav)
+
+    expect(existsSync(wav)).toBe(true)
+    expect(LosslessSourceCache.get('C:\\out\\song.mp3')).toBe(wav)
+  })
+
   it('returns null for an output path that was never registered', async () => {
     const { LosslessSourceCache } = await import('../LosslessSourceCache')
     expect(LosslessSourceCache.get('C:\\out\\never-recorded.mp3')).toBeNull()
+  })
+
+  it('get() self-heals and returns null when the retained file was deleted externally', async () => {
+    const { LosslessSourceCache } = await import('../LosslessSourceCache')
+    const wav = join(testTmpDir, 'autotape_external.wav')
+    writeFileSync(wav, 'x')
+    LosslessSourceCache.register('C:\\out\\song.mp3', wav)
+
+    // Simulate external deletion (e.g. antivirus, manual cleanup) that bypasses
+    // this module's own register()/evict() bookkeeping entirely.
+    rmSync(wav)
+
+    expect(LosslessSourceCache.get('C:\\out\\song.mp3')).toBeNull()
+    // The stale mapping must be dropped too, not just masked — re-registering
+    // a fresh source for the same key should not attempt to delete the (already
+    // gone) old path a second time or otherwise misbehave.
+    const fresh = join(testTmpDir, 'autotape_fresh.wav')
+    writeFileSync(fresh, 'x')
+    LosslessSourceCache.register('C:\\out\\song.mp3', fresh)
+    expect(LosslessSourceCache.get('C:\\out\\song.mp3')).toBe(fresh)
+  })
+
+  it('evict() removes the cache entry without deleting its file', async () => {
+    const { LosslessSourceCache } = await import('../LosslessSourceCache')
+    const wav = join(testTmpDir, 'autotape_evict.wav')
+    writeFileSync(wav, 'x')
+    LosslessSourceCache.register('C:\\out\\song.mp3', wav)
+
+    LosslessSourceCache.evict('C:\\out\\song.mp3')
+
+    expect(LosslessSourceCache.get('C:\\out\\song.mp3')).toBeNull()
+    expect(existsSync(wav)).toBe(true)
   })
 
   // sweepOrphanedLosslessSources() always scans the real os.tmpdir() (matching where

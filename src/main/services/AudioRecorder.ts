@@ -343,7 +343,9 @@ export class AudioRecorder extends EventEmitter {
 
     let existingTags: NodeID3.Tags = {}
     try {
-      existingTags = NodeID3.read(filePath) ?? {}
+      // NodeID3.Promise.* (not the sync NodeID3.read/write) so this doesn't
+      // block the main process's event loop on file I/O.
+      existingTags = (await NodeID3.Promise.read(filePath)) ?? {}
     } catch {
       // Original file's tags unreadable — proceed without them rather than failing the trim.
     }
@@ -358,7 +360,7 @@ export class AudioRecorder extends EventEmitter {
     await AudioRecorder._runFfmpegAndRename(binary, args, tmpPath, filePath)
 
     try {
-      NodeID3.write(existingTags, filePath)
+      await NodeID3.Promise.write(existingTags, filePath)
     } catch {
       // Best-effort — the audio trim already succeeded; losing tags here shouldn't fail the operation.
     }
@@ -372,18 +374,25 @@ export class AudioRecorder extends EventEmitter {
    * lossless), points at the still-uncompressed temp WAV captured before the
    * original MP3 encode, letting this do a single-generation re-encode instead
    * of decoding-then-re-encoding the already-lossy MP3 a second time.
+   *
+   * The returned `usedLosslessSource` tells the caller whether a provided
+   * source was actually used — false means either none was given, or the
+   * given one failed (e.g. evicted mid-race) and this fell back to the lossy
+   * path, letting the caller (e.g. the IPC handler backing LosslessSourceCache)
+   * evict a now-known-bad cache entry instead of retrying it forever.
    */
   static async retrimFile(
     filePath: string,
     startSec: number,
     endSec: number,
     losslessSourcePath?: string | null
-  ): Promise<void> {
+  ): Promise<{ usedLosslessSource: boolean }> {
     const binary = getFfmpegPath()
     const isWav = filePath.toLowerCase().endsWith('.wav')
 
     if (isWav) {
-      return AudioRecorder._retrimWavFile(binary, filePath, startSec, endSec)
+      await AudioRecorder._retrimWavFile(binary, filePath, startSec, endSec)
+      return { usedLosslessSource: false }
     }
 
     // Re-encode at the file's original bitrate rather than a fixed VBR quality,
@@ -394,13 +403,14 @@ export class AudioRecorder extends EventEmitter {
     if (losslessSourcePath) {
       try {
         await AudioRecorder._retrimMp3FromSource(binary, filePath, losslessSourcePath, startSec, endSec, bitrate)
-        return
+        return { usedLosslessSource: true }
       } catch (err) {
         log(`[AudioRecorder] retrim from lossless source failed, falling back to lossy re-encode: ${(err as Error).message}`)
       }
     }
 
-    return AudioRecorder._retrimMp3Lossy(binary, filePath, startSec, endSec, bitrate)
+    await AudioRecorder._retrimMp3Lossy(binary, filePath, startSec, endSec, bitrate)
+    return { usedLosslessSource: false }
   }
 
   /**
