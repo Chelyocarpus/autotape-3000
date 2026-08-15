@@ -98,9 +98,16 @@ export class GsmtcService extends EventEmitter {
   private _metadataPendingPollCount = 0
   private _prevTrackBeforeReset: GsmtcTrack = { ...EMPTY_TRACK }
   private _consecutiveFailures = 0
+  private _failed = false
 
   get currentTrack(): GsmtcTrack {
     return this._currentTrack
+  }
+
+  /** True once the loop has given up after MAX_CONSECUTIVE_FAILURES — distinguishes a
+   *  permanent failure from an explicit stop() or an in-progress backoff retry. Cleared by start(). */
+  get isFailed(): boolean {
+    return this._failed
   }
 
   setSourceFilter(sourceFilter: string): void {
@@ -182,6 +189,7 @@ export class GsmtcService extends EventEmitter {
   start(intervalMs = 50): void {
     if (this._process || this._stopped === false && this._restartTimer) return
     this._stopped = false
+    this._failed = false
     this._intervalMs = intervalMs
     this._consecutiveFailures = 0
     this._spawnLoop(intervalMs)
@@ -253,6 +261,11 @@ export class GsmtcService extends EventEmitter {
       }
 
       if (this._consecutiveFailures >= GsmtcService.MAX_CONSECUTIVE_FAILURES) {
+        // Mark stopped/failed *before* emitting so a listener that calls isFailed()
+        // synchronously sees the final state, and so no further restart can be
+        // triggered by another code path (e.g. setSourceFilter) racing this emit.
+        this._stopped = true
+        this._failed = true
         this.emit(
           'error',
           new Error(

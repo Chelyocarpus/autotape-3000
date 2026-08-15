@@ -255,7 +255,11 @@ function wireGsmtc(): void {
   })
 
   gsmtcService.on('error', (err) => {
-    console.error('[GSMTC]', err.message)
+    if (gsmtcService.isFailed) {
+      console.error('[GSMTC] permanently stopped:', err.message)
+    } else {
+      console.error('[GSMTC]', err.message)
+    }
   })
 }
 
