@@ -12,7 +12,7 @@ export default defineConfig({
         }
       }
     },
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin({ include: ['electron'] })]
   },
   preload: {
     build: {
@@ -22,7 +22,7 @@ export default defineConfig({
         }
       }
     },
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin({ include: ['electron'] })]
   },
   renderer: {
     resolve: {

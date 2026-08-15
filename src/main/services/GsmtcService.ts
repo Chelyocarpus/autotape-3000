@@ -78,6 +78,12 @@ export declare interface GsmtcService {
 
 export class GsmtcService extends EventEmitter {
   private static readonly MAX_PENDING_POLLS = 30
+  /** Consecutive immediate-exit restarts tolerated before giving up on the loop entirely. */
+  private static readonly MAX_CONSECUTIVE_FAILURES = 10
+  /** A process that stays up at least this long is treated as a working run, resetting backoff. */
+  private static readonly HEALTHY_RUN_MS = 3_000
+  private static readonly BASE_RESTART_DELAY_MS = 1_000
+  private static readonly MAX_RESTART_DELAY_MS = 30_000
 
   private _currentTrack: GsmtcTrack = EMPTY_TRACK
   private _scriptPath: string
@@ -91,9 +97,17 @@ export class GsmtcService extends EventEmitter {
   private _metadataPending = false
   private _metadataPendingPollCount = 0
   private _prevTrackBeforeReset: GsmtcTrack = { ...EMPTY_TRACK }
+  private _consecutiveFailures = 0
+  private _failed = false
 
   get currentTrack(): GsmtcTrack {
     return this._currentTrack
+  }
+
+  /** True once the loop has given up after MAX_CONSECUTIVE_FAILURES — distinguishes a
+   *  permanent failure from an explicit stop() or an in-progress backoff retry. Cleared by start(). */
+  get isFailed(): boolean {
+    return this._failed
   }
 
   setSourceFilter(sourceFilter: string): void {
@@ -106,6 +120,8 @@ export class GsmtcService extends EventEmitter {
       this._process = null
     }
     if (!this._stopped) {
+      this._consecutiveFailures = 0
+      this._clearRestartTimer()
       this._spawnLoop(this._intervalMs)
     }
   }
@@ -173,7 +189,9 @@ export class GsmtcService extends EventEmitter {
   start(intervalMs = 50): void {
     if (this._process || this._stopped === false && this._restartTimer) return
     this._stopped = false
+    this._failed = false
     this._intervalMs = intervalMs
+    this._consecutiveFailures = 0
     this._spawnLoop(intervalMs)
   }
 
@@ -210,6 +228,7 @@ export class GsmtcService extends EventEmitter {
     )
 
     this._process = proc
+    const startedAt = Date.now()
 
     const rl = createInterface({ input: proc.stdout!, crlfDelay: Infinity })
     this._readline = rl
@@ -231,12 +250,40 @@ export class GsmtcService extends EventEmitter {
         this._readline = null
       }
       if (this._process === proc) this._process = null
-      if (!this._stopped) {
-        this._restartTimer = setTimeout(() => {
-          this._restartTimer = null
-          this._spawnLoop(intervalMs)
-        }, 1000)
+      if (this._stopped) return
+
+      // A process that ran for a while before exiting was working; treat it as
+      // healthy and reset backoff instead of penalizing an unrelated later failure.
+      if (Date.now() - startedAt >= GsmtcService.HEALTHY_RUN_MS) {
+        this._consecutiveFailures = 0
+      } else {
+        this._consecutiveFailures++
       }
+
+      if (this._consecutiveFailures >= GsmtcService.MAX_CONSECUTIVE_FAILURES) {
+        // Mark stopped/failed *before* emitting so a listener that calls isFailed()
+        // synchronously sees the final state, and so no further restart can be
+        // triggered by another code path (e.g. setSourceFilter) racing this emit.
+        this._stopped = true
+        this._failed = true
+        this.emit(
+          'error',
+          new Error(
+            `GSMTC polling process failed to start ${GsmtcService.MAX_CONSECUTIVE_FAILURES} times in a row — giving up. ` +
+              'Check that PowerShell scripts are allowed to run (antivirus / execution policy) on this machine.'
+          )
+        )
+        return
+      }
+
+      const delay = Math.min(
+        GsmtcService.BASE_RESTART_DELAY_MS * 2 ** (this._consecutiveFailures - 1),
+        GsmtcService.MAX_RESTART_DELAY_MS
+      )
+      this._restartTimer = setTimeout(() => {
+        this._restartTimer = null
+        this._spawnLoop(intervalMs)
+      }, delay)
     })
 
     proc.on('error', (err) => this.emit('error', err))

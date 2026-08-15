@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Square, Play } from 'lucide-react'
 import { cn } from '../lib/utils'
-import type { GsmtcTrack } from '../types'
 
 const IDLE_TAGLINES = [
   'Drop the needle.',
@@ -18,7 +17,6 @@ const RECORDING_STATUSES = [
 
 interface RecordButtonProps {
   isRecording: boolean
-  currentTrack: GsmtcTrack | null
   elapsed: number
   trackCount: number
   onStart: () => void
@@ -126,7 +124,6 @@ function VinylDisc({ isRecording, tron }: { isRecording: boolean; tron: boolean 
 
 export function RecordButton({
   isRecording,
-  currentTrack,
   elapsed,
   trackCount,
   onStart,
@@ -205,15 +202,6 @@ export function RecordButton({
         </p>
       )}
 
-      {/* Currently recording track */}
-      {isRecording && currentTrack && (
-        <div className="w-full rounded-lg bg-zinc-800/60 border border-zinc-700/40 px-3 py-2 text-xs">
-          <p className="text-zinc-500 mb-0.5 uppercase tracking-wider text-[10px]">Capturing</p>
-          <p className="text-zinc-200 font-medium truncate">
-            {currentTrack.artist} — {currentTrack.title}
-          </p>
-        </div>
-      )}
     </div>
   )
 }

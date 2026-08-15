@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-08-15
+
+### Removed
+
+- **"Capturing" track box during recording** — The small box showing the artist and title of the track currently being captured has been removed from below the record button.
+
+### Fixed
+
+- **Track-detection process could restart in a tight, endless loop** — If the background process that reads currently-playing track info kept failing to start (for example, blocked by antivirus or a PowerShell execution policy), it would retry every second forever. It now waits longer between each failed retry (up to 30 seconds) and gives up with an error message after 10 failures in a row, instead of retrying indefinitely.
+- **Giving up after repeated failures could be silently undone** — After the track-detection process gave up, changing the app/source filter in Settings could unintentionally kick off a fresh unbounded retry loop instead of staying stopped.
+
 ## [2.5.0] - 2026-07-12
 
 ### Added
