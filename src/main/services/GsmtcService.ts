@@ -4,25 +4,9 @@ import { createInterface } from 'readline'
 import { join } from 'path'
 import { app } from 'electron'
 import { log } from './log'
+import type { GsmtcTrack, SourceSessionOption } from '../../shared/types'
 
-export interface GsmtcTrack {
-  artist: string
-  title: string
-  album: string
-  albumArtFile: string
-  albumArtMime?: string
-  sourceAppId?: string
-  positionMs?: number
-  isPlaying: boolean
-}
-
-export interface GsmtcSessionOption {
-  sourceAppId: string
-  title: string
-  artist: string
-  isPlaying: boolean
-  hasArtwork: boolean
-}
+export type { GsmtcTrack, SourceSessionOption } from '../../shared/types'
 
 const EMPTY_TRACK: GsmtcTrack = {
   artist: '',
@@ -132,7 +116,7 @@ export class GsmtcService extends EventEmitter {
     if (track.title) void this._fetchArtworkForTrack(track)
   }
 
-  async listSessions(): Promise<GsmtcSessionOption[]> {
+  async listSessions(): Promise<SourceSessionOption[]> {
     const listRaw = await this._runScript(['-List'])
     if (!listRaw) return []
 
@@ -140,12 +124,12 @@ export class GsmtcService extends EventEmitter {
       const parsed = JSON.parse(listRaw) as GsmtcTrack[] | GsmtcTrack
       const items = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : [])
 
-      const byApp = new Map<string, GsmtcSessionOption>()
+      const byApp = new Map<string, SourceSessionOption>()
       for (const track of items) {
         const sourceAppId = (track.sourceAppId ?? '').trim()
         if (!sourceAppId) continue
 
-        const candidate: GsmtcSessionOption = {
+        const candidate: SourceSessionOption = {
           sourceAppId,
           title: track.title ?? '',
           artist: track.artist ?? '',

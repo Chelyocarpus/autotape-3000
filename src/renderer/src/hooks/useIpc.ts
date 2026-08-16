@@ -1,61 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { GsmtcTrack, UserSettings, RecordingEntry, AudioDevice, SourceSessionOption } from '../types'
+import type { ElectronAPI } from '../../../preload'
 
-// The electronAPI is injected by the preload script via contextBridge
+// The electronAPI is injected by the preload script via contextBridge — its
+// shape is defined once in preload/index.ts and imported here so the two
+// can't drift apart.
 declare global {
   interface Window {
-    electronAPI: {
-      // App metadata
-      getAppVersion: () => Promise<string>
-
-      // Theme
-      getTheme: () => Promise<'dark' | 'light'>
-      saveTheme: (theme: 'dark' | 'light') => Promise<void>
-
-      // GSMTC
-      onTrackChanged: (cb: (track: GsmtcTrack) => void) => () => void
-      onPlayStateChanged: (cb: (isPlaying: boolean) => void) => () => void
-      onArtworkUpdated: (cb: (track: GsmtcTrack) => void) => () => void
-      getCurrentTrack: () => Promise<GsmtcTrack>
-      listSessions: () => Promise<SourceSessionOption[]>
-
-      // Recording control
-      startRecording: () => Promise<void>
-      stopRecording: () => Promise<void>
-      onRecordingStarted: (cb: (track: GsmtcTrack) => void) => () => void
-      onRecordingFinished: (cb: (entry: RecordingEntry) => void) => () => void
-      onSilenceWarning: (cb: () => void) => () => void
-      onAudioDetected: (cb: () => void) => () => void
-
-      // Settings
-      getSettings: () => Promise<UserSettings>
-      saveSettings: (s: UserSettings) => Promise<void>
-
-      // Audio devices
-      getAudioDevices: () => Promise<AudioDevice[]>
-
-      // ffmpeg binary path
-      detectFfmpeg: () => Promise<string>
-      getFfmpegPath: () => Promise<string>
-
-      // File dialog
-      pickOutputDir: () => Promise<string | null>
-
-      // Shell
-      openPath: (path: string) => Promise<void>
-
-      // Title bar overlay (native Windows min/max/close buttons)
-      setTitleBarOverlay: (overlay: { color: string; symbolColor: string }) => Promise<void>
-
-      // Trim / presets
-      trimApply: (filePath: string, startSec: number, endSec: number) => Promise<{ durationSec: number }>
-      trimGetPreset: (artist: string, title: string) => Promise<{ startOffsetSec: number; endOffsetSec: number } | null>
-      trimGetAllPresets: () => Promise<Record<string, { startOffsetSec: number; endOffsetSec: number }>>
-      trimSavePreset: (artist: string, title: string | null, startOffsetSec: number, endOffsetSec: number) => Promise<void>
-      trimDeletePreset: (artist: string, title: string) => Promise<void>
-      trimHasLosslessSource: (filePath: string) => Promise<boolean>
-      readAudioFile: (filePath: string) => Promise<Uint8Array>
-    }
+    electronAPI: ElectronAPI
   }
 }
 
@@ -98,6 +50,10 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
   const [currentTrack, setCurrentTrack] = useState<GsmtcTrack | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [silenceWarning, setSilenceWarning] = useState(false)
+  // Best-effort "a stopped recording is being written to disk" indicator — not
+  // matched to a specific entry by id, just cleared on the next finish/error so
+  // it can't get stuck showing if a finalize fails.
+  const [finalizingTrack, setFinalizingTrack] = useState<GsmtcTrack | null>(null)
   const startTimeRef = useRef<number>(0)
 
   const start = useCallback(async () => {
@@ -124,13 +80,18 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
       setElapsed(0)
     })
     const unsubFinished = window.electronAPI.onRecordingFinished((entry) => {
+      setFinalizingTrack(null)
       onEntry(entry)
+    })
+    const unsubFinalizing = window.electronAPI.onRecordingFinalizing((track) => {
+      setFinalizingTrack(track)
     })
     const unsubSilence = window.electronAPI.onSilenceWarning(() => setSilenceWarning(true))
     const unsubAudio = window.electronAPI.onAudioDetected(() => setSilenceWarning(false))
     return () => {
       unsubStarted()
       unsubFinished()
+      unsubFinalizing()
       unsubSilence()
       unsubAudio()
     }
@@ -143,7 +104,7 @@ export function useRecording(onEntry: (e: RecordingEntry) => void) {
     return () => clearInterval(id)
   }, [isRecording])
 
-  return { isRecording, currentTrack, elapsed, silenceWarning, start, stop }
+  return { isRecording, currentTrack, elapsed, silenceWarning, finalizingTrack, start, stop }
 }
 
 /** Read the running app's version (from package.json via Electron) */

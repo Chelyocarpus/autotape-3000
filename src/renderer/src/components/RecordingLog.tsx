@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, XCircle, SkipForward, ExternalLink, Music2, Scissors } from 'lucide-react'
+import { CheckCircle2, XCircle, SkipForward, ExternalLink, Music2, Scissors, Loader2 } from 'lucide-react'
 import { ScrollArea } from './ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import type { RecordingEntry } from '../types'
+import type { GsmtcTrack, RecordingEntry } from '../types'
 
 interface RecordingLogProps {
   entries: RecordingEntry[]
   onTrimEntry: (entry: RecordingEntry) => void
+  /** A just-stopped recording currently being encoded/written — shown as a pending row. */
+  finalizingTrack?: GsmtcTrack | null
 }
 
 function formatDuration(sec: number): string {
@@ -48,8 +50,29 @@ function RecordingThumb({ entry }: { entry: RecordingEntry }) {
   )
 }
 
-export function RecordingLog({ entries, onTrimEntry }: RecordingLogProps) {
-  if (entries.length === 0) {
+function FinalizingRow({ track }: { track: GsmtcTrack }) {
+  return (
+    <div className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 overflow-hidden">
+      <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-amber-500/50" />
+
+      <div className="w-9 h-9 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40">
+        <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-zinc-200 truncate leading-snug">
+          {track.title || 'Unknown'}
+        </p>
+        <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5">{track.artist}</p>
+      </div>
+
+      <span className="text-[11px] text-zinc-500 tracking-wide shrink-0">encoding…</span>
+    </div>
+  )
+}
+
+export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: RecordingLogProps) {
+  if (entries.length === 0 && !finalizingTrack) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 pb-6">
         <div className="w-14 h-14 rounded-xl bg-zinc-800/60 flex items-center justify-center ring-1 ring-zinc-700/30">
@@ -73,6 +96,7 @@ export function RecordingLog({ entries, onTrimEntry }: RecordingLogProps) {
   return (
     <ScrollArea className="h-full">
       <div className="flex flex-col py-1 px-2">
+        {finalizingTrack && <FinalizingRow track={finalizingTrack} />}
         {[...entries].reverse().map((entry) => (
           <div
             key={entry.id}

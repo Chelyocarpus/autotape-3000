@@ -8,6 +8,9 @@ import { resolveOutputPath, swapExtension, type DuplicateAction, type MediaForma
 import { writeId3Tags } from './MetadataTagger'
 import { getTrimPreset } from './TrimPresetsStore'
 import { log } from './log'
+import type { RecordingEntry } from '../../shared/types'
+
+export type { RecordingEntry } from '../../shared/types'
 
 export interface TrackSplitterSettings {
   outputDir: string
@@ -19,23 +22,12 @@ export interface TrackSplitterSettings {
   minSaveSeconds: number
 }
 
-export interface RecordingEntry {
-  id: string
-  artist: string
-  title: string
-  filePath: string
-  albumArtFile?: string
-  albumArtMime?: string
-  durationSec: number
-  status: 'ok' | 'skipped' | 'error'
-  error?: string
-  startedAt: number
-}
-
 export declare interface TrackSplitter {
   on(event: 'recordingStarted', listener: (track: GsmtcTrack) => void): this
   on(event: 'recordingFinished', listener: (entry: RecordingEntry) => void): this
   on(event: 'recordingTrackUpdated', listener: (track: GsmtcTrack) => void): this
+  /** A stopped recording is now being encoded/written to disk — for a "processing" UI indicator. */
+  on(event: 'recordingFinalizing', listener: (track: GsmtcTrack) => void): this
   on(event: 'error', listener: (err: Error) => void): this
   on(event: 'silenceWarning', listener: () => void): this
   on(event: 'audioDetected', listener: () => void): this
@@ -340,13 +332,29 @@ export class TrackSplitter extends EventEmitter {
     this.emit('recordingStarted', track)
   }
 
+  /**
+   * Start capturing before metadata (title/artist) is available, unlike
+   * _startRecording() which checks resolveOutputPath() first.
+   *
+   * Robustness / pitfalls guarded against:
+   * - Can't duplicate-check before starting here: resolveOutputPath() needs
+   *   artist+title to build the candidate filename, and this path exists
+   *   precisely because GSMTC reported isPlaying before it had a title —
+   *   waiting for it would mean losing the start of the track. The check
+   *   instead runs in _onTrackMetadataUpdated() once the title lands.
+   * - Wasted capture on a since-detected duplicate: bounded to the raw WAV
+   *   bytes written before that check fires (typically well under a second at
+   *   this app's GSMTC poll rate). _onTrackMetadataUpdated()'s duplicate path
+   *   stops the recorder without promoting _currentTrack past this placeholder,
+   *   so _finalizeStoppedRecording()'s "no real title" branch unlinks the temp
+   *   WAV directly — no lossy encodeToMp3() call, no file left behind.
+   */
   private _startRecordingImmediate(placeholder: GsmtcTrack): void {
     if (!this._settings) return
     if (this._recorder.isRunning) {
       log(`[Splitter] _startRecordingImmediate: SKIPPED — recorder already running`)
       return
     }
-    // Start capturing audio before metadata is available.
     // _onTrackMetadataUpdated will update _currentTrack and announce the recording.
     log('[Splitter] _startRecordingImmediate: START (awaiting metadata)')
     this._pendingMetadataUpdate = true
@@ -674,6 +682,10 @@ export class TrackSplitter extends EventEmitter {
       log(`[Splitter] _finalize: "${track.title}" durationSec=${durationSec} minSave=${settings.minSaveSeconds} hasTitle=${!!track.title}`)
 
       // Placeholder recording whose metadata never updated — discard silently.
+      // Also the exit path for a duplicate detected by _onTrackMetadataUpdated
+      // (see _startRecordingImmediate's doc comment): it stops the recorder
+      // without ever promoting _currentTrack past this empty-title placeholder,
+      // so the duplicate's temp WAV lands here and is unlinked pre-encode.
       if (!track.title || (track.sourceAppId && track.title === track.sourceAppId)) {
         log(`[Splitter] _finalize: DISCARD — no real title (title="${track.title}" sourceAppId="${track.sourceAppId}")`)
         try { unlinkSync(tmpWav) } catch { /* ignore */ }
@@ -738,6 +750,11 @@ export class TrackSplitter extends EventEmitter {
         } satisfies RecordingEntry)
         return
       }
+
+      // Past the discard/duplicate checks — an encode or disk write is about to
+      // start and, for a long recording, may take a perceptible moment (mp3
+      // encode isn't instant; wav trim/rename is normally fast but not free).
+      this.emit('recordingFinalizing', track)
 
       if (settings.format === 'mp3') {
         log(`[Splitter] _finalize: SAVING mp3 "${track.title}" (${durationSec}s trimSec=${trimSec.toFixed(3)})`)

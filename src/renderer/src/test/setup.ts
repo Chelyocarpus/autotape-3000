@@ -37,6 +37,7 @@ function makeElectronApiMock(): Window['electronAPI'] {
     stopRecording: () => Promise.resolve(),
     onRecordingStarted: () => () => {},
     onRecordingFinished: () => () => {},
+    onRecordingFinalizing: () => () => {},
     onSilenceWarning: () => () => {},
     onAudioDetected: () => () => {},
 

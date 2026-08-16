@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, dirname, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resolveOutputPath, swapExtension } from '../FileManager'
 
@@ -70,5 +70,29 @@ describe('FileManager', () => {
   it('swapExtension replaces only the extension, keeping dir and basename', () => {
     const wav = join(dir, 'sub', 'A - B.wav')
     expect(swapExtension(wav, 'mp3')).toBe(join(dir, 'sub', 'A - B.mp3'))
+  })
+
+  it('resolves a path-traversal attempt in artist/title to a plain in-dir filename', () => {
+    const path = resolveOutputPath({
+      outputDir: dir,
+      artist: '..\\..\\..\\Windows\\System32',
+      title: '../../etc/passwd',
+      format: 'mp3',
+      duplicateAction: 'increment'
+    })
+    expect(path).not.toBeNull()
+    expect(dirname(path!)).toBe(resolve(dir))
+    expect(existsSync(dirname(path!))).toBe(true)
+  })
+
+  it('falls back to "Unknown Artist/Title" when artist/title sanitize to bare dots', () => {
+    const path = resolveOutputPath({
+      outputDir: dir,
+      artist: '..',
+      title: '...',
+      format: 'mp3',
+      duplicateAction: 'increment'
+    })
+    expect(path).toBe(join(dir, 'Unknown Artist - Unknown Title.mp3'))
   })
 })

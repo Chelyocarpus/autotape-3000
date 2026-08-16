@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.5.2] - 2026-08-16
 
+### Added
+
+- **"Encoding…" indicator while a recording is being saved** — After a track finishes, saving it to MP3/WAV now briefly shows a spinner in the recording list instead of appearing to do nothing until the file shows up.
+
+### Removed
+
+- **The hidden "type TRON" theme easter egg** — Typing "tron" no longer switches the app into its secret Tron-styled look.
+
 ### Fixed
 
 - **Trim preview showed "failed to fetch" instead of loading the waveform** — In an installed (non-dev) build, opening the trim tool to preview and trim a recording could fail immediately with a generic "failed to fetch" error instead of showing the waveform. Recordings are now read directly rather than through a fetch that could be blocked in this situation, so the trim preview loads reliably.
+- **Typing in Settings could briefly stutter** — Editing the output folder or ffmpeg path fields saved to disk on every keystroke. Saves are now grouped together and written a moment after you stop typing, so nothing is lost but typing stays smooth.
+- **Hardened saved-file naming against unusual track metadata** — Song titles/artists come from whatever app is playing music, so a file name is now double-checked to always land inside your chosen output folder no matter what characters that metadata contains.
+- **Hardened album art and audio preview loading** — The internal links used to load album art and audio previews are now double-checked to only ever load files from the app's own temporary folder.
+- **Background recording process could be left running after closing the app** — In some cases, quitting Autotape didn't stop the background audio-capture process, leaving it running unseen. It's now always stopped when the app quits.
+- **Saving song info (title/artist/cover art) into a file could briefly stall the app** — Writing this info, especially with large cover art, now happens without blocking the rest of the app.
 
 ## [2.5.1] - 2026-08-15
 

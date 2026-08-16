@@ -2,19 +2,9 @@ import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import type { DuplicateAction, MediaFormat } from './FileManager'
+import type { UserSettings } from '../../shared/types'
 
-export interface UserSettings {
-  outputDir: string
-  format: MediaFormat
-  bitrate: number
-  deviceId: string
-  duplicateAction: DuplicateAction
-  sessionFilter: string
-  minSaveSeconds: number
-  /** Explicit path to the ffmpeg binary. Empty string = auto-detect. */
-  ffmpegPath: string
-}
+export type { UserSettings } from '../../shared/types'
 
 const DEFAULTS: UserSettings = {
   outputDir: join(homedir(), 'Music', 'Autotape 3000'),
