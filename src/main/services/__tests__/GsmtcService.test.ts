@@ -12,8 +12,21 @@ vi.mock('child_process', () => {
   return { execFile: vi.fn(), spawn, ChildProcess: class {}, default: { execFile: vi.fn(), spawn } }
 })
 
+/** Captures the 'line' callback GsmtcService registers, so tests can feed it JSON lines
+ *  the way the real PowerShell loop's stdout would, without a live child process. */
+let latestLineHandler: ((line: string) => void) | null = null
+
 vi.mock('readline', () => {
-  const createInterface = () => ({ on: vi.fn(), close: vi.fn() })
+  const createInterface = () => {
+    const iface = {
+      on: (event: string, cb: (line: string) => void) => {
+        if (event === 'line') latestLineHandler = cb
+        return iface
+      },
+      close: vi.fn()
+    }
+    return iface
+  }
   return { createInterface, default: { createInterface } }
 })
 
@@ -99,6 +112,41 @@ describe('isLikelyNextTrack', () => {
     const prev = track({ positionMs: 60_000 })
     const next = track({ positionMs: 58_000 })
     expect(isLikelyNextTrack(prev, next)).toBe(false)
+  })
+})
+
+describe('GsmtcService sentinel position', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => new FakeChildProcess())
+    latestLineHandler = null
+  })
+
+  /**
+   * Reproduces a real bug: the position-reset sentinel emitted while a new
+   * track's title is still pending previously hardcoded positionMs to 0
+   * (from EMPTY_TRACK) instead of passing through the poll's actual reset
+   * position. TrackSplitter uses that value to compute how much
+   * warm-recorder pre-roll to trim, so discarding it made every such
+   * recording trim a bit too much off the real start of the song.
+   */
+  it('carries the real reset position through the sentinel trackChanged event, not a hardcoded 0', () => {
+    const service = new GsmtcService()
+    const trackChanged = vi.fn()
+    service.on('trackChanged', trackChanged)
+    service.start(50)
+
+    // First poll: an ordinary, already-playing track establishes _currentTrack.
+    latestLineHandler!(JSON.stringify(track({ positionMs: 180_000, isPlaying: true })))
+
+    // Second poll: same (stale) title/artist but position has reset near-zero —
+    // the real-world case where GSMTC's position updates before its metadata does.
+    latestLineHandler!(JSON.stringify(track({ positionMs: 220, isPlaying: true })))
+
+    expect(trackChanged).toHaveBeenCalledTimes(2)
+    const sentinel = trackChanged.mock.calls[1][1] as GsmtcTrack
+    expect(sentinel.title).toBe('')
+    expect(sentinel.positionMs).toBe(220)
   })
 })
 

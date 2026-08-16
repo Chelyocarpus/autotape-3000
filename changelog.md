@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hardened album art and audio preview loading** — The internal links used to load album art and audio previews are now double-checked to only ever load files from the app's own temporary folder.
 - **Background recording process could be left running after closing the app** — In some cases, quitting Autotape didn't stop the background audio-capture process, leaving it running unseen. It's now always stopped when the app quits.
 - **Saving song info (title/artist/cover art) into a file could briefly stall the app** — Writing this info, especially with large cover art, now happens without blocking the rest of the app.
+- **A quickly replayed song could silently overwrite its own earlier recording** — If the same track was recorded twice in close succession (e.g. played again right after finishing), the second save could land on the exact same file name as the first while it was still being written, losing one of the two recordings instead of saving both.
+- **Recordings could lose a small sliver of audio right at the start of a song** — When a track change was detected before the new song's title had arrived yet, Autotape briefly assumed the new song hadn't started playing at all, which could trim slightly too much off the beginning once it saved. It now uses the actual reported playback position, so the trim lines up correctly.
 
 ## [2.5.1] - 2026-08-15
 

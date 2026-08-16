@@ -67,6 +67,32 @@ describe('FileManager', () => {
     expect(path).toBe(join(dir, 'A - B (3).mp3'))
   })
 
+  it('treats a reservedPaths entry as taken even though it does not exist on disk yet (increment)', () => {
+    const reserved = new Set([join(dir, 'A - B.mp3')])
+    const path = resolveOutputPath({
+      outputDir: dir, artist: 'A', title: 'B', format: 'mp3', duplicateAction: 'increment', reservedPaths: reserved
+    })
+    expect(path).toBe(join(dir, 'A - B (2).mp3'))
+    expect(existsSync(join(dir, 'A - B.mp3'))).toBe(false) // still nothing actually on disk
+  })
+
+  it('treats a reservedPaths entry as taken even though it does not exist on disk yet (skip)', () => {
+    const reserved = new Set([join(dir, 'A - B.mp3')])
+    const path = resolveOutputPath({
+      outputDir: dir, artist: 'A', title: 'B', format: 'mp3', duplicateAction: 'skip', reservedPaths: reserved
+    })
+    expect(path).toBeNull()
+  })
+
+  it('skips a reserved "(n)" candidate too, not just the reserved base name', () => {
+    writeFileSync(join(dir, 'A - B.mp3'), '') // base name already on disk (first recording, done)
+    const reserved = new Set([join(dir, 'A - B (2).mp3')]) // "(2)" claimed by a second in-flight finalize
+    const path = resolveOutputPath({
+      outputDir: dir, artist: 'A', title: 'B', format: 'mp3', duplicateAction: 'increment', reservedPaths: reserved
+    })
+    expect(path).toBe(join(dir, 'A - B (3).mp3'))
+  })
+
   it('swapExtension replaces only the extension, keeping dir and basename', () => {
     const wav = join(dir, 'sub', 'A - B.wav')
     expect(swapExtension(wav, 'mp3')).toBe(join(dir, 'sub', 'A - B.mp3'))

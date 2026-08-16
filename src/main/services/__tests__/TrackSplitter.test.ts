@@ -367,6 +367,66 @@ describe('TrackSplitter', () => {
     expect(finalizing).toHaveLength(0)
   })
 
+  it('reserves the output path for the duration of a write, so a second concurrent finalize for the same artist+title does not resolve to the identical not-yet-on-disk path', async () => {
+    // Mirrors resolveOutputPath's real increment behavior, but keyed off reservedPaths
+    // instead of the filesystem (these tests never touch real files) — this is the
+    // exact race TrackSplitter._reservedOutputPaths exists to close: two detached,
+    // unserialized finalizes for the same track identity (e.g. a replayed song)
+    // must not both resolve to "Song A.mp3" while the first is still encoding it.
+    vi.mocked(resolveOutputPath).mockImplementation(({ outputDir, artist, title, format, reservedPaths }) => {
+      const base = `${outputDir}\\${artist} - ${title}.${format}`
+      if (!reservedPaths?.has(base)) return base
+      return `${outputDir}\\${artist} - ${title} (2).${format}`
+    })
+
+    // Gate the first "Song A" encode so it's still in-flight (and its reservation
+    // still held) when the second "Song A" finalize runs its own resolveOutputPath.
+    let releaseFirstEncode: () => void = () => {}
+    const firstEncodeGate = new Promise<void>((resolve) => { releaseFirstEncode = resolve })
+    FakeRecorder.encodeToMp3.mockImplementationOnce(() => firstEncodeGate)
+
+    const T0 = 8_000_000
+    vi.setSystemTime(T0)
+    const songA = track({ artist: 'Artist', title: 'Song A', positionMs: 0, isPlaying: true })
+    const gsmtc = new FakeGsmtc(songA)
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const finished: RecordingEntry[] = []
+    splitter.on('recordingFinished', (e) => finished.push(e))
+
+    splitter.startListening(makeSettings())
+
+    // Song A → B: outgoing "Song A" #1 starts finalizing (encode gated, reservation held).
+    vi.setSystemTime(T0 + 3_000)
+    const songB = track({ artist: 'Artist', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    // Song B → A → B: outgoing "Song B" finalizes (unrelated path), then Song A plays
+    // again and its own B-transition finalize ("Song A" #2) runs resolveOutputPath
+    // while #1's reservation on the base path is still held.
+    vi.setSystemTime(T0 + 6_000)
+    gsmtc.emit('trackChanged', songB, songA)
+    await flush()
+    vi.setSystemTime(T0 + 9_000)
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    // Let the first, gated encode complete now that both resolutions have happened.
+    releaseFirstEncode()
+    await flush()
+
+    // The second finalize's encode isn't gated, so it resolves (and emits recordingFinished)
+    // before the first, gated one is released below — order isn't what's under test here,
+    // only that the two concurrent finalizes landed on two DISTINCT paths instead of both
+    // resolving to the same not-yet-on-disk "Song A.mp3" and clobbering each other.
+    const songAResults = finished.filter((e) => e.title === 'Song A' && e.status === 'ok')
+    expect(songAResults).toHaveLength(2)
+    const paths = songAResults.map((e) => e.filePath).sort()
+    expect(paths).toEqual(['C:\\Music\\Artist - Song A (2).mp3', 'C:\\Music\\Artist - Song A.mp3'])
+    // The reservation must not leak past its write completing.
+    expect((splitter as unknown as { _reservedOutputPaths: Set<string> })._reservedOutputPaths.size).toBe(0)
+  })
+
   it('skips starting a recording when the resolved output path is already taken (duplicate, action=skip)', () => {
     vi.mocked(resolveOutputPath).mockReturnValueOnce(null)
 

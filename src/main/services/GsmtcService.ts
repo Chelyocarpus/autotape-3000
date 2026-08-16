@@ -373,7 +373,12 @@ export class GsmtcService extends EventEmitter {
         const sentinel: GsmtcTrack = {
           ...EMPTY_TRACK,
           sourceAppId: track.sourceAppId,
-          isPlaying: track.isPlaying
+          isPlaying: track.isPlaying,
+          // Carry the real reset position through (not the EMPTY_TRACK default of 0) —
+          // TrackSplitter uses this to compute how much warm-recorder pre-roll to trim,
+          // and treating an already-nonzero reset position as 0 over-trims into the
+          // start of the new track's real audio.
+          positionMs: track.positionMs
         }
         this._prevTrackBeforeReset = { ...prev }
         this._metadataPending = true
