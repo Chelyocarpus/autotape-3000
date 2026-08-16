@@ -11,6 +11,12 @@ export interface OutputFileOptions {
   title: string
   format: MediaFormat
   duplicateAction: DuplicateAction
+  /**
+   * Paths a caller has already claimed for an in-flight write (e.g. an encode
+   * still running) but that don't exist on disk yet. Treated as taken alongside
+   * existsSync() — see resolveOutputPath's doc comment for why this is needed.
+   */
+  reservedPaths?: ReadonlySet<string>
 }
 
 const INVALID_CHARS = /[/\\:*?"<>|]/g
@@ -54,9 +60,23 @@ function buildCandidatePath(outputDir: string, fileName: string): string {
 /**
  * Resolves the final output path for a track, handling duplicates.
  * Returns null if the file should be skipped (duplicate action = skip and file exists).
+ *
+ * Robustness / pitfalls guarded against:
+ * - TOCTOU race between two concurrent callers targeting the same artist+title:
+ *   this only checks existsSync(), but the caller's actual write (an mp3 encode
+ *   can take real seconds) happens well after this returns. Two callers racing
+ *   for the same track identity — e.g. a song replayed while its first
+ *   recording is still encoding, each finalized by TrackSplitter's detached,
+ *   unserialized background task — would otherwise both see "not on disk yet"
+ *   and resolve to the identical candidate, so the second write silently
+ *   clobbers the first instead of getting "(2)". `reservedPaths` lets a caller
+ *   that holds a path for an in-flight write make later calls see it as taken,
+ *   closing that gap. It's the caller's responsibility to reserve/release it
+ *   (see TrackSplitter._reservedOutputPaths) — this function only reads it.
  */
 export function resolveOutputPath(opts: OutputFileOptions): string | null {
-  const { outputDir, artist, title, format, duplicateAction } = opts
+  const { outputDir, artist, title, format, duplicateAction, reservedPaths } = opts
+  const isTaken = (p: string): boolean => existsSync(p) || (reservedPaths?.has(p) ?? false)
 
   mkdirSync(outputDir, { recursive: true })
 
@@ -64,7 +84,7 @@ export function resolveOutputPath(opts: OutputFileOptions): string | null {
   const ext = `.${format}`
   const candidate = buildCandidatePath(outputDir, `${baseName}${ext}`)
 
-  if (!existsSync(candidate)) {
+  if (!isTaken(candidate)) {
     return candidate
   }
 
@@ -83,7 +103,7 @@ export function resolveOutputPath(opts: OutputFileOptions): string | null {
       const MAX_INCREMENT_ATTEMPTS = 1000
       for (let i = 2; i <= MAX_INCREMENT_ATTEMPTS; i++) {
         const attempt = buildCandidatePath(outputDir, `${baseName} (${i})${ext}`)
-        if (!existsSync(attempt)) return attempt
+        if (!isTaken(attempt)) return attempt
       }
       // Give up finding a free "(n)" slot — fall back to a timestamped name so
       // we still terminate and return a usable, near-certainly-unique path.

@@ -57,6 +57,9 @@ export class TrackSplitter extends EventEmitter {
   private _powerSaveBlockerId: number | null = null
   // Pending restart timer for the warm recorder — prevents tight restart loops on ffmpeg exit.
   private _warmRestartTimer: ReturnType<typeof setTimeout> | null = null
+  // Output paths currently claimed by an in-flight (not-yet-on-disk) finalize —
+  // see resolveOutputPath's doc comment for the race this closes.
+  private _reservedOutputPaths = new Set<string>()
 
   constructor(private readonly _gsmtc: GsmtcService) {
     super()
@@ -304,7 +307,8 @@ export class TrackSplitter extends EventEmitter {
       artist: track.artist,
       title: track.title,
       format: this._settings.format,
-      duplicateAction: this._settings.duplicateAction
+      duplicateAction: this._settings.duplicateAction,
+      reservedPaths: this._reservedOutputPaths
     })
 
     if (outputPath === null) {
@@ -377,7 +381,8 @@ export class TrackSplitter extends EventEmitter {
         artist: track.artist,
         title: track.title,
         format: settings.format,
-        duplicateAction: settings.duplicateAction
+        duplicateAction: settings.duplicateAction,
+        reservedPaths: this._reservedOutputPaths
       })
       if (outputPath === null) {
         log(`[Splitter] trackMetadataUpdated: DUPLICATE — discarding in-progress recording for "${track.title}"`)
@@ -730,7 +735,8 @@ export class TrackSplitter extends EventEmitter {
         artist: track.artist,
         title: track.title,
         format: settings.format,
-        duplicateAction: settings.duplicateAction
+        duplicateAction: settings.duplicateAction,
+        reservedPaths: this._reservedOutputPaths
       })
 
       if (!outputPath) {
@@ -756,66 +762,80 @@ export class TrackSplitter extends EventEmitter {
       // encode isn't instant; wav trim/rename is normally fast but not free).
       this.emit('recordingFinalizing', track)
 
-      if (settings.format === 'mp3') {
-        log(`[Splitter] _finalize: SAVING mp3 "${track.title}" (${durationSec}s trimSec=${trimSec.toFixed(3)})`)
-        const mp3Path = swapExtension(outputPath, 'mp3')
-        try {
-          await AudioRecorder.encodeToMp3(tmpWav, mp3Path, settings.bitrate, trimSec, maxDurationSec)
-          LosslessSourceCache.register(mp3Path, tmpWav)
-          await writeId3Tags(mp3Path, track)
+      // Claim outputPath for the duration of the write, and release it no matter
+      // how the write ends — see resolveOutputPath's doc comment for the race
+      // this closes (two detached finalizes for the same artist+title, e.g. a
+      // replayed song, otherwise both resolving to the same not-yet-on-disk
+      // candidate and clobbering each other instead of getting distinct names).
+      this._reservedOutputPaths.add(outputPath)
+      try {
+        if (settings.format === 'mp3') {
+          log(`[Splitter] _finalize: SAVING mp3 "${track.title}" (${durationSec}s trimSec=${trimSec.toFixed(3)})`)
+          // swapExtension is a no-op here in practice — resolveOutputPath already
+          // built outputPath with a ".mp3" extension for format === 'mp3' — but
+          // mp3Path is the actual write target, so the reservation above must
+          // continue to key on the same value this stays equal to.
+          const mp3Path = swapExtension(outputPath, 'mp3')
+          try {
+            await AudioRecorder.encodeToMp3(tmpWav, mp3Path, settings.bitrate, trimSec, maxDurationSec)
+            LosslessSourceCache.register(mp3Path, tmpWav)
+            await writeId3Tags(mp3Path, track)
+            this.emit('recordingFinished', {
+              id: `${Date.now()}`,
+              artist: track.artist,
+              title: track.title,
+              filePath: mp3Path,
+              albumArtFile: track.albumArtFile,
+              albumArtMime: track.albumArtMime,
+              durationSec,
+              status: 'ok',
+              startedAt
+            } satisfies RecordingEntry)
+          } catch (encErr) {
+            log(`[Splitter] _finalize: mp3 encode FAILED for "${track.title}" — ${encErr instanceof Error ? encErr.message : String(encErr)}`)
+            try { unlinkSync(tmpWav) } catch { /* ignore */ }
+            try { unlinkSync(mp3Path) } catch { /* ignore */ }
+            this.emit('recordingFinished', {
+              id: `${Date.now()}`,
+              artist: track.artist,
+              title: track.title,
+              filePath: '',
+              albumArtFile: track.albumArtFile,
+              albumArtMime: track.albumArtMime,
+              durationSec,
+              status: 'error',
+              error: encErr instanceof Error ? encErr.message : String(encErr),
+              startedAt
+            } satisfies RecordingEntry)
+          }
+        } else {
+          log(`[Splitter] _finalize: SAVING wav "${track.title}" (${durationSec}s trimSec=${trimSec.toFixed(3)})`)
+          if (trimSec > 0 || maxDurationSec !== undefined) {
+            // Trim pre-roll / clamp duration via stream-copy (no re-encode).
+            try {
+              await AudioRecorder.trimWav(tmpWav, outputPath, trimSec, maxDurationSec)
+            } catch {
+              // Fallback: save untrimmed if trim failed.
+              renameSync(tmpWav, outputPath)
+            }
+            try { unlinkSync(tmpWav) } catch { /* ignore */ }
+          } else {
+            renameSync(tmpWav, outputPath)
+          }
           this.emit('recordingFinished', {
             id: `${Date.now()}`,
             artist: track.artist,
             title: track.title,
-            filePath: mp3Path,
+            filePath: outputPath,
             albumArtFile: track.albumArtFile,
             albumArtMime: track.albumArtMime,
             durationSec,
             status: 'ok',
             startedAt
           } satisfies RecordingEntry)
-        } catch (encErr) {
-          log(`[Splitter] _finalize: mp3 encode FAILED for "${track.title}" — ${encErr instanceof Error ? encErr.message : String(encErr)}`)
-          try { unlinkSync(tmpWav) } catch { /* ignore */ }
-          try { unlinkSync(mp3Path) } catch { /* ignore */ }
-          this.emit('recordingFinished', {
-            id: `${Date.now()}`,
-            artist: track.artist,
-            title: track.title,
-            filePath: '',
-            albumArtFile: track.albumArtFile,
-            albumArtMime: track.albumArtMime,
-            durationSec,
-            status: 'error',
-            error: encErr instanceof Error ? encErr.message : String(encErr),
-            startedAt
-          } satisfies RecordingEntry)
         }
-      } else {
-        log(`[Splitter] _finalize: SAVING wav "${track.title}" (${durationSec}s trimSec=${trimSec.toFixed(3)})`)
-        if (trimSec > 0 || maxDurationSec !== undefined) {
-          // Trim pre-roll / clamp duration via stream-copy (no re-encode).
-          try {
-            await AudioRecorder.trimWav(tmpWav, outputPath, trimSec, maxDurationSec)
-          } catch {
-            // Fallback: save untrimmed if trim failed.
-            renameSync(tmpWav, outputPath)
-          }
-          try { unlinkSync(tmpWav) } catch { /* ignore */ }
-        } else {
-          renameSync(tmpWav, outputPath)
-        }
-        this.emit('recordingFinished', {
-          id: `${Date.now()}`,
-          artist: track.artist,
-          title: track.title,
-          filePath: outputPath,
-          albumArtFile: track.albumArtFile,
-          albumArtMime: track.albumArtMime,
-          durationSec,
-          status: 'ok',
-          startedAt
-        } satisfies RecordingEntry)
+      } finally {
+        this._reservedOutputPaths.delete(outputPath)
       }
   }
 }
