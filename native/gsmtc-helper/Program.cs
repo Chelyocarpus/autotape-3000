@@ -54,10 +54,13 @@ async Task ResyncAsync()
 
         await EmitAsync();
     }
-    catch
+    catch (Exception ex)
     {
         // Transient WinRT/COM failures (e.g. a session vanished mid-call) — stay alive,
-        // the next event or manager-level change will resync.
+        // the next event or manager-level change will resync. Still log it: a silent
+        // swallow here is exactly what makes a real-world "GSMTC stopped updating" report
+        // impossible to diagnose after the fact.
+        LogError("ResyncAsync", ex);
     }
     finally
     {
@@ -72,9 +75,10 @@ async Task OnSessionChangedAsync()
     {
         await EmitAsync();
     }
-    catch
+    catch (Exception ex)
     {
         // Same rationale as ResyncAsync — don't let a transient failure kill the process.
+        LogError("OnSessionChangedAsync", ex);
     }
     finally
     {
@@ -96,6 +100,11 @@ static bool IsSpotify(GlobalSystemMediaTransportControlsSession session)
     return appId.Contains("spotify", StringComparison.OrdinalIgnoreCase);
 }
 
+static void LogError(string context, Exception ex)
+{
+    Console.Error.WriteLine($"[GsmtcHelper] {context}: {ex.GetType().Name}: {ex.Message}");
+}
+
 static bool IsPlayingSafe(GlobalSystemMediaTransportControlsSession session)
 {
     try
@@ -103,8 +112,9 @@ static bool IsPlayingSafe(GlobalSystemMediaTransportControlsSession session)
         return session.GetPlaybackInfo().PlaybackStatus ==
             GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
     }
-    catch
+    catch (Exception ex)
     {
+        LogError("IsPlayingSafe", ex);
         return false;
     }
 }
@@ -126,8 +136,9 @@ static async Task<GsmtcTrack?> GetSessionTrackAsync(
         isPlaying = session.GetPlaybackInfo().PlaybackStatus ==
             GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
     }
-    catch
+    catch (Exception ex)
     {
+        LogError("GetSessionTrackAsync/GetPlaybackInfo", ex);
         return null;
     }
 
@@ -138,9 +149,10 @@ static async Task<GsmtcTrack?> GetSessionTrackAsync(
         positionMs = (long)timeline.Position.TotalMilliseconds;
         if (positionMs < 0) positionMs = 0;
     }
-    catch
+    catch (Exception ex)
     {
-        // Position is best-effort — leave at 0 if unavailable.
+        // Position is best-effort — leave at 0 if unavailable, but still log why.
+        LogError("GetSessionTrackAsync/GetTimelineProperties", ex);
     }
 
     GlobalSystemMediaTransportControlsSessionMediaProperties props;
@@ -148,8 +160,9 @@ static async Task<GsmtcTrack?> GetSessionTrackAsync(
     {
         props = await session.TryGetMediaPropertiesAsync();
     }
-    catch
+    catch (Exception ex)
     {
+        LogError("GetSessionTrackAsync/TryGetMediaPropertiesAsync", ex);
         return null;
     }
     if (props == null) return null;
@@ -173,7 +186,8 @@ static async Task<GlobalSystemMediaTransportControlsSession?> SelectTargetSessio
     if (requestedSource != "")
     {
         IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions;
-        try { sessions = manager.GetSessions(); } catch { return null; }
+        try { sessions = manager.GetSessions(); }
+        catch (Exception ex) { LogError("SelectTargetSessionAsync/GetSessions(filtered)", ex); return null; }
 
         foreach (var s in sessions)
         {
@@ -183,11 +197,13 @@ static async Task<GlobalSystemMediaTransportControlsSession?> SelectTargetSessio
     }
 
     GlobalSystemMediaTransportControlsSession? current = null;
-    try { current = manager.GetCurrentSession(); } catch { /* fall through to session scan */ }
+    try { current = manager.GetCurrentSession(); }
+    catch (Exception ex) { LogError("SelectTargetSessionAsync/GetCurrentSession", ex); /* fall through to session scan */ }
     if (current != null && await GetSessionTrackAsync(current, "") != null) return current;
 
     IReadOnlyList<GlobalSystemMediaTransportControlsSession> all;
-    try { all = manager.GetSessions(); } catch { return null; }
+    try { all = manager.GetSessions(); }
+    catch (Exception ex) { LogError("SelectTargetSessionAsync/GetSessions(auto)", ex); return null; }
 
     foreach (var s in all)
     {

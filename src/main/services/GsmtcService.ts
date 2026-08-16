@@ -74,6 +74,7 @@ export class GsmtcService extends EventEmitter {
   private _helperPath: string
   private _process: ChildProcess | null = null
   private _readline: ReturnType<typeof createInterface> | null = null
+  private _stderrReadline: ReturnType<typeof createInterface> | null = null
   private _restartTimer: ReturnType<typeof setTimeout> | null = null
   private _stopped = false
   private _sourceFilter = 'auto'
@@ -186,6 +187,10 @@ export class GsmtcService extends EventEmitter {
       this._readline.close()
       this._readline = null
     }
+    if (this._stderrReadline) {
+      this._stderrReadline.close()
+      this._stderrReadline = null
+    }
     if (this._process) {
       this._process.kill()
       this._process = null
@@ -194,7 +199,7 @@ export class GsmtcService extends EventEmitter {
 
   private _spawnLoop(): void {
     const proc = spawn(this._helperPath, [this._sourceFilter || 'auto'], {
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     })
 
@@ -215,10 +220,24 @@ export class GsmtcService extends EventEmitter {
       }
     })
 
+    // The helper logs its own caught exceptions to stderr (context + exception type/message,
+    // not full stack traces) so a real-world "GSMTC stopped updating" report is diagnosable
+    // from the app's own log instead of only reproducible by manually running the exe.
+    const stderrRl = createInterface({ input: proc.stderr!, crlfDelay: Infinity })
+    this._stderrReadline = stderrRl
+    stderrRl.on('line', (raw) => {
+      const line = raw.trim()
+      if (line) log(`[GsmtcHelper] ${line}`)
+    })
+
     proc.on('exit', () => {
       if (this._readline === rl) {
         this._readline.close()
         this._readline = null
+      }
+      if (this._stderrReadline === stderrRl) {
+        this._stderrReadline.close()
+        this._stderrReadline = null
       }
       if (this._process === proc) this._process = null
       if (this._stopped) return

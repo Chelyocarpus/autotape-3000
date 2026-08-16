@@ -12,15 +12,22 @@ vi.mock('child_process', () => {
   return { execFile: vi.fn(), spawn, ChildProcess: class {}, default: { execFile: vi.fn(), spawn } }
 })
 
-/** Captures the 'line' callback GsmtcService registers, so tests can feed it JSON lines
- *  the way the real PowerShell loop's stdout would, without a live child process. */
+/** Captures the 'line' callback GsmtcService registers for the helper's stdout, so tests
+ *  can feed it JSON lines the way the real GsmtcHelper.exe stdout would, without a live
+ *  child process. Keyed off the fake stdout/stderr streams' `__stream` tag below so the
+ *  two readline interfaces GsmtcService now creates (stdout for track data, stderr for
+ *  diagnostic logging) don't clobber each other's captured handler. */
 let latestLineHandler: ((line: string) => void) | null = null
+let latestStderrLineHandler: ((line: string) => void) | null = null
 
 vi.mock('readline', () => {
-  const createInterface = () => {
+  const createInterface = ({ input }: { input?: { __stream?: string } } = {}) => {
     const iface = {
       on: (event: string, cb: (line: string) => void) => {
-        if (event === 'line') latestLineHandler = cb
+        if (event === 'line') {
+          if (input?.__stream === 'stderr') latestStderrLineHandler = cb
+          else latestLineHandler = cb
+        }
         return iface
       },
       close: vi.fn()
@@ -34,7 +41,8 @@ import { GsmtcService, isLikelyNextTrack, tracksEqual, type GsmtcTrack } from '.
 
 /** Fake ChildProcess covering exactly what GsmtcService._spawnLoop() touches. */
 class FakeChildProcess extends EventEmitter {
-  stdout = new EventEmitter()
+  stdout = Object.assign(new EventEmitter(), { __stream: 'stdout' as const })
+  stderr = Object.assign(new EventEmitter(), { __stream: 'stderr' as const })
   kill = vi.fn()
 }
 
@@ -147,6 +155,70 @@ describe('GsmtcService sentinel position', () => {
     const sentinel = trackChanged.mock.calls[1][1] as GsmtcTrack
     expect(sentinel.title).toBe('')
     expect(sentinel.positionMs).toBe(220)
+  })
+})
+
+describe('GsmtcService helper process spawn', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => new FakeChildProcess())
+  })
+
+  /**
+   * Locks in the process-spawn contract GsmtcService relies on after the migration from
+   * spawning `powershell.exe gsmtc_loop.ps1` to spawning the compiled GsmtcHelper.exe
+   * directly. A future change that silently reverts to the old shape (wrong exe, missing
+   * the source-filter arg, or dropped process options) would otherwise only surface as a
+   * runtime GSMTC failure, not a test failure.
+   */
+  it('spawns GsmtcHelper.exe with the default source filter and expected process options', () => {
+    const service = new GsmtcService()
+    service.start()
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    const [command, args, options] = spawnMock.mock.calls[0] as [string, string[], Record<string, unknown>]
+
+    expect(command).toContain('GsmtcHelper.exe')
+    expect(args).toEqual(['auto'])
+    expect(options).toMatchObject({
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+  })
+
+  /**
+   * The compiled helper logs its own caught exceptions to stderr rather than swallowing
+   * them silently, specifically so real-world "GSMTC stopped updating" reports are
+   * diagnosable from the app's own log. That only has value if GsmtcService actually
+   * captures and surfaces that stderr instead of discarding it.
+   */
+  it('forwards the helper stderr output into the app log', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const service = new GsmtcService()
+      service.start()
+
+      expect(latestStderrLineHandler).not.toBeNull()
+      latestStderrLineHandler!('[GsmtcHelper] ResyncAsync: COMException: The RPC server is unavailable.')
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(logged).toContain('[GsmtcHelper] ResyncAsync: COMException')
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+
+  it('passes the active source filter through to the helper on setSourceFilter()', () => {
+    const service = new GsmtcService()
+    service.start()
+    spawnMock.mockClear()
+
+    service.setSourceFilter('Spotify.exe')
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    const [command, args] = spawnMock.mock.calls[0] as [string, string[]]
+    expect(command).toContain('GsmtcHelper.exe')
+    expect(args).toEqual(['Spotify.exe'])
   })
 })
 
