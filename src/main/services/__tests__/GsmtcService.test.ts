@@ -134,7 +134,7 @@ describe('GsmtcService sentinel position', () => {
     const service = new GsmtcService()
     const trackChanged = vi.fn()
     service.on('trackChanged', trackChanged)
-    service.start(50)
+    service.start()
 
     // First poll: an ordinary, already-playing track establishes _currentTrack.
     latestLineHandler!(JSON.stringify(track({ positionMs: 180_000, isPlaying: true })))
@@ -182,7 +182,7 @@ describe('GsmtcService restart backoff', () => {
     const errorHandler = vi.fn()
     service.on('error', errorHandler)
 
-    service.start(50)
+    service.start()
     expect(spawnMock).toHaveBeenCalledTimes(1)
 
     // 9 failures back off and respawn; the 10th gives up instead of scheduling another.
@@ -206,13 +206,13 @@ describe('GsmtcService restart backoff', () => {
   it('clears isFailed when start() is called again after giving up', () => {
     const service = new GsmtcService()
     service.on('error', () => {})
-    service.start(50)
+    service.start()
     for (let i = 1; i <= 10; i++) {
       failLatestProcessAndAdvance(i)
     }
     expect(service.isFailed).toBe(true)
 
-    service.start(50)
+    service.start()
     expect(service.isFailed).toBe(false)
     expect(spawnMock).toHaveBeenCalledTimes(11)
   })

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **"Encoding…" indicator while a recording is being saved** — After a track finishes, saving it to MP3/WAV now briefly shows a spinner in the recording list instead of appearing to do nothing until the file shows up.
 
+### Changed
+
+- **Now-playing detection uses less background CPU** — Autotape now reacts to song changes, pauses, and skips using Windows' own media notifications instead of checking many times per second in the background.
+
 ### Removed
 
 - **The hidden "type TRON" theme easter egg** — Typing "tron" no longer switches the app into its secret Tron-styled look.

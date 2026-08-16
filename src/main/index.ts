@@ -515,7 +515,7 @@ app.whenReady().then(() => {
   void AudioRecorder.probe()
 
   // Start GSMTC polling once window is created (very fast cadence to minimize split lag)
-  gsmtcService.start(100)
+  gsmtcService.start()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

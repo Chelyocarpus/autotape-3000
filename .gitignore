@@ -12,6 +12,11 @@ electron.vite.config.*.mjs
 # Bundled ffmpeg binary (large binary; fetched by @ffmpeg-installer at install time)
 resources/ffmpeg/
 
+# Compiled GSMTC helper (built by `pnpm run build:gsmtc-helper`)
+native/gsmtc-helper/bin/
+native/gsmtc-helper/obj/
+resources/gsmtc-helper/
+
 # Logs
 *.log
 *.log.*
