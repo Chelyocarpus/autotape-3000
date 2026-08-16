@@ -323,6 +323,50 @@ describe('TrackSplitter', () => {
     expect(FakeRecorder.instances[0].isRunning).toBe(true)
   })
 
+  it('emits recordingFinalizing (for a "processing" UI indicator) before recordingFinished on a successful save', async () => {
+    const T0 = 6_000_000
+    vi.setSystemTime(T0)
+
+    const initialTrack = track({ artist: 'Artist', title: 'Song A', positionMs: 0, isPlaying: true })
+    const gsmtc = new FakeGsmtc(initialTrack)
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const events: string[] = []
+    splitter.on('recordingFinalizing', (t) => events.push(`finalizing:${t.title}`))
+    splitter.on('recordingFinished', (e) => events.push(`finished:${e.title}`))
+
+    splitter.startListening(makeSettings())
+
+    vi.setSystemTime(T0 + 3_000)
+    const songB = track({ artist: 'Artist', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', initialTrack, songB)
+    await flush()
+
+    expect(events).toEqual(['finalizing:Song A', 'finished:Song A'])
+  })
+
+  it('does not emit recordingFinalizing for a recording dropped below minSaveSeconds', async () => {
+    const T0 = 6_500_000
+    vi.setSystemTime(T0)
+
+    const gsmtc = new FakeGsmtc(track({ isPlaying: false, title: '' }))
+    const splitter = new TrackSplitter(gsmtc as unknown as GsmtcService)
+    const finalizing: GsmtcTrack[] = []
+    splitter.on('recordingFinalizing', (t) => finalizing.push(t))
+
+    splitter.startListening(makeSettings({ minSaveSeconds: 3 }))
+
+    const songA = track({ artist: 'A', title: 'Short Song', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', track({ isPlaying: false }), songA)
+    await flush()
+
+    vi.setSystemTime(T0 + 1_000)
+    const songB = track({ artist: 'B', title: 'Song B', positionMs: 0, isPlaying: true })
+    gsmtc.emit('trackChanged', songA, songB)
+    await flush()
+
+    expect(finalizing).toHaveLength(0)
+  })
+
   it('skips starting a recording when the resolved output path is already taken (duplicate, action=skip)', () => {
     vi.mocked(resolveOutputPath).mockReturnValueOnce(null)
 

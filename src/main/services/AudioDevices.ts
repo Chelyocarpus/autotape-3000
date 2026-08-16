@@ -1,11 +1,9 @@
 import { execFile } from 'child_process'
 import { getFfmpegPath } from './FfmpegResolver'
 import { log } from './log'
+import type { AudioDevice } from '../../shared/types'
 
-export interface AudioDevice {
-  id: string
-  name: string
-}
+export type { AudioDevice } from '../../shared/types'
 
 /**
  * Lists available DirectShow audio capture devices by asking ffmpeg.

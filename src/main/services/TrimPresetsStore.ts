@@ -1,13 +1,9 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import type { TrimPreset } from '../../shared/types'
 
-export interface TrimPreset {
-  /** Extra seconds to trim from the start of the recorded file. */
-  startOffsetSec: number
-  /** Extra seconds to trim from the end of the recorded file. */
-  endOffsetSec: number
-}
+export type { TrimPreset } from '../../shared/types'
 
 const GLOBAL_KEY = '*'
 

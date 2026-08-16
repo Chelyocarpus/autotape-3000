@@ -21,7 +21,6 @@ interface RecordButtonProps {
   trackCount: number
   onStart: () => void
   onStop: () => void
-  tron?: boolean
 }
 
 function formatElapsed(seconds: number): string {
@@ -32,7 +31,7 @@ function formatElapsed(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function VinylDisc({ isRecording, tron }: { isRecording: boolean; tron: boolean }) {
+function VinylDisc({ isRecording }: { isRecording: boolean }) {
   return (
     <svg
       className={cn(
@@ -45,79 +44,34 @@ function VinylDisc({ isRecording, tron }: { isRecording: boolean; tron: boolean 
       fill="none"
       aria-hidden="true"
     >
-      {tron ? (
-        <>
-          {/* Tron disc — dark grid with cyan circuit grooves */}
-          <circle cx="56" cy="56" r="55" fill="#000a14" />
+      {/* Outer disc — warm near-black vinyl */}
+      <circle cx="56" cy="56" r="55" fill="#0e0d08" />
 
-          {/* Circuit groove rings — cyan neon lines */}
-          <circle cx="56" cy="56" r="50" stroke="#003d55" strokeWidth="1" />
-          <circle cx="56" cy="56" r="46" stroke="#005a7a" strokeWidth="0.6" />
-          <circle cx="56" cy="56" r="42" stroke="#003d55" strokeWidth="1" />
-          <circle cx="56" cy="56" r="38" stroke="#005a7a" strokeWidth="0.6" />
-          <circle cx="56" cy="56" r="34" stroke="#003d55" strokeWidth="1" />
-          <circle cx="56" cy="56" r="30" stroke="#00afd1" strokeWidth="0.8" />
-          <circle cx="56" cy="56" r="26" stroke="#003d55" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="22" stroke="#005a7a" strokeWidth="0.5" />
+      {/* Groove rings — alternating warm-dark tones */}
+      <circle cx="56" cy="56" r="50" stroke="#1e1c11" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="46" stroke="#252310" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="42" stroke="#1e1c11" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="38" stroke="#252310" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="34" stroke="#1e1c11" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="30" stroke="#252310" strokeWidth="0.7" />
+      <circle cx="56" cy="56" r="26" stroke="#1e1c11" strokeWidth="0.6" />
+      <circle cx="56" cy="56" r="22" stroke="#252310" strokeWidth="0.5" />
 
-          {/* Circuit trace lines radiating from center */}
-          <line x1="56" y1="39" x2="56" y2="8"  stroke="#006080" strokeWidth="0.6" />
-          <line x1="56" y1="73" x2="56" y2="104" stroke="#006080" strokeWidth="0.6" />
-          <line x1="39" y1="56" x2="8"  y2="56"  stroke="#006080" strokeWidth="0.6" />
-          <line x1="73" y1="56" x2="104" y2="56"  stroke="#006080" strokeWidth="0.6" />
-          <line x1="44" y1="44" x2="20" y2="20" stroke="#003d55" strokeWidth="0.5" />
-          <line x1="68" y1="68" x2="92" y2="92" stroke="#003d55" strokeWidth="0.5" />
-          <line x1="68" y1="44" x2="92" y2="20" stroke="#003d55" strokeWidth="0.5" />
-          <line x1="44" y1="68" x2="20" y2="92" stroke="#003d55" strokeWidth="0.5" />
+      {/* Subtle specular highlight arc for depth */}
+      <path
+        d="M 20 50 A 38 38 0 0 1 54 19"
+        stroke="rgba(255,255,255,0.045)"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
 
-          {/* Neon specular arc */}
-          <path
-            d="M 18 48 A 40 40 0 0 1 52 18"
-            stroke="rgba(0,200,255,0.18)"
-            strokeWidth="3"
-            strokeLinecap="round"
-          />
-
-          {/* Center label — neon cyan */}
-          <circle cx="56" cy="56" r="17" fill={isRecording ? '#004d6b' : '#002d40'} />
-          <circle cx="56" cy="56" r="17" fill="none" stroke={isRecording ? '#00d4ef' : '#009ab5'} strokeWidth="1.2" />
-          <circle cx="56" cy="56" r="13" fill="none" stroke="rgba(0,212,239,0.25)" strokeWidth="0.7" />
-          {/* Spindle hole */}
-          <circle cx="56" cy="56" r="2.5" fill="#000a14" />
-          <circle cx="56" cy="56" r="2.5" fill="none" stroke="#00d4ef" strokeWidth="0.8" />
-        </>
-      ) : (
-        <>
-          {/* Outer disc — warm near-black vinyl */}
-          <circle cx="56" cy="56" r="55" fill="#0e0d08" />
-
-          {/* Groove rings — alternating warm-dark tones */}
-          <circle cx="56" cy="56" r="50" stroke="#1e1c11" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="46" stroke="#252310" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="42" stroke="#1e1c11" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="38" stroke="#252310" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="34" stroke="#1e1c11" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="30" stroke="#252310" strokeWidth="0.7" />
-          <circle cx="56" cy="56" r="26" stroke="#1e1c11" strokeWidth="0.6" />
-          <circle cx="56" cy="56" r="22" stroke="#252310" strokeWidth="0.5" />
-
-          {/* Subtle specular highlight arc for depth */}
-          <path
-            d="M 20 50 A 38 38 0 0 1 54 19"
-            stroke="rgba(255,255,255,0.045)"
-            strokeWidth="3"
-            strokeLinecap="round"
-          />
-
-          {/* Center label */}
-          <circle cx="56" cy="56" r="17" fill={isRecording ? 'var(--rec-500)' : 'var(--color-amber-500)'} />
-          {/* Label inner decorative ring */}
-          <circle cx="56" cy="56" r="13" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.7" />
-          {/* Spindle hole */}
-          <circle cx="56" cy="56" r="2.5" fill="#09080503" />
-          <circle cx="56" cy="56" r="2.5" fill="#0d0c06" />
-        </>
-      )}
+      {/* Center label */}
+      <circle cx="56" cy="56" r="17" fill={isRecording ? 'var(--rec-500)' : 'var(--color-amber-500)'} />
+      {/* Label inner decorative ring */}
+      <circle cx="56" cy="56" r="13" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.7" />
+      {/* Spindle hole */}
+      <circle cx="56" cy="56" r="2.5" fill="#09080503" />
+      <circle cx="56" cy="56" r="2.5" fill="#0d0c06" />
     </svg>
   )
 }
@@ -128,7 +82,6 @@ export function RecordButton({
   trackCount,
   onStart,
   onStop,
-  tron = false,
 }: RecordButtonProps) {
   const [taglineIndex, setTaglineIndex] = useState(0)
   const [statusIndex, setStatusIndex] = useState(0)
@@ -160,7 +113,7 @@ export function RecordButton({
           onClick={isRecording ? onStop : onStart}
           aria-label={isRecording ? 'Stop recording' : 'Start recording'}
         >
-          <VinylDisc isRecording={isRecording} tron={tron} />
+          <VinylDisc isRecording={isRecording} />
           {/* Icon floats over center label — stop when recording, play when idle */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             {isRecording

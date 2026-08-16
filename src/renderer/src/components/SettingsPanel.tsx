@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { FolderOpen, RefreshCw, FileAudio, Gauge, Radio, Timer, Headphones, FileMinus2, Cpu, Clapperboard } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -18,10 +18,23 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
   const { resolvedPath, detecting, detect } = useFfmpegPath()
   const appVersion = useAppVersion()
   const [local, setLocal] = useState<UserSettings | null>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingSaveRef = useRef<UserSettings | null>(null)
 
   useEffect(() => {
     if (settings && !local) setLocal(settings)
   }, [settings, local])
+
+  // Flush any debounced save that hasn't fired yet so a change isn't lost if the panel closes quickly.
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        if (pendingSaveRef.current) save(pendingSaveRef.current)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (!local) {
     return <div className="text-zinc-500 text-sm p-4">Loading settings…</div>
@@ -30,7 +43,13 @@ export function SettingsPanel({ onOpenWizard }: { onOpenWizard?: () => void }) {
   function update(patch: Partial<UserSettings>) {
     const next = { ...local!, ...patch }
     setLocal(next)
-    save(next)
+    pendingSaveRef.current = next
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null
+      pendingSaveRef.current = null
+      save(next)
+    }, 500)
   }
 
   async function pickFolder() {

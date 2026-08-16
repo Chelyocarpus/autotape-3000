@@ -28,6 +28,33 @@ export class AudioRecorder extends EventEmitter {
   private static _firstDshowInput: string | null | undefined = undefined
   private static _probePromise: Promise<void> | null = null
 
+  // Every currently-spawned capture process (main + pre-warmed recorder), tracked so
+  // the app can force-kill them on quit instead of leaving dshow capture running.
+  private static _liveProcesses = new Set<ChildProcess>()
+
+  /**
+   * Force-kill every tracked capture process. Call from app quit handlers.
+   *
+   * Robustness / pitfalls guarded against:
+   * - Indefinite orphaned capture: unlike the transcode/retrim ffmpeg calls (which
+   *   are short, self-terminating execFile invocations), a capture process never
+   *   stops on its own — it keeps writing to its temp WAV and holding the dshow
+   *   device open for as long as the OS lets it run, so quit paths must reap it
+   *   explicitly rather than assuming process exit will clean it up.
+   * - Double-kill / already-exited process: `kill()` on an already-dead process is
+   *   a documented no-op in Node, so no live-check is needed before calling it.
+   * - Only reachable on a graceful quit (window close, app.quit(), OS logoff) —
+   *   a hard kill of the Electron process itself (Task Manager "End task", crash)
+   *   terminates this code before it can run; that gap needs an OS-level fix
+   *   (e.g. a Windows Job Object) which is out of scope for pure Node/Electron.
+   */
+  static killAll(): void {
+    for (const proc of AudioRecorder._liveProcesses) {
+      proc.kill('SIGKILL')
+    }
+    AudioRecorder._liveProcesses.clear()
+  }
+
   /**
    * Pre-warm the ffmpeg capability cache using async execFile so the first
    * recording start never blocks the main-process event loop.
@@ -92,6 +119,7 @@ export class AudioRecorder extends EventEmitter {
     const args = this._buildCaptureArgs(deviceId, tmp)
 
     this._proc = spawn(binary, args, { windowsHide: true })
+    AudioRecorder._liveProcesses.add(this._proc)
     this._running = true
 
     let stderrBuf = ''
@@ -111,11 +139,13 @@ export class AudioRecorder extends EventEmitter {
     })
 
     this._proc.on('error', (err) => {
+      if (this._proc) AudioRecorder._liveProcesses.delete(this._proc)
       this._running = false
       this.emit('error', err)
     })
 
     this._proc.on('close', (_code) => {
+      if (this._proc) AudioRecorder._liveProcesses.delete(this._proc)
       this._running = false
       if (this._tmpPath) {
         this.emit('stopped', this._tmpPath)

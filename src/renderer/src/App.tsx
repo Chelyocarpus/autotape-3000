@@ -13,8 +13,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './comp
 import { useGsmtcTrack, useRecording } from './hooks/useIpc'
 import type { RecordingEntry } from './types'
 
-const TRON_CODE = ['t', 'r', 'o', 'n']
-
 export function App() {
   const track = useGsmtcTrack()
   const [entries, setEntries] = useState<RecordingEntry[]>([])
@@ -44,34 +42,6 @@ export function App() {
 
   const toggleTheme = useCallback(() => {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
-  }, [])
-
-  const tronRef = useRef<string[]>([])
-  const [tronMode, setTronMode] = useState(false)
-  const [tronOverlay, setTronOverlay] = useState(false)
-
-  // Persist tronMode on documentElement
-  useEffect(() => {
-    document.documentElement.setAttribute('data-tron', tronMode ? 'true' : 'false')
-  }, [tronMode])
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      // Tron code — type "tron"
-      const nextTron = [...tronRef.current, e.key.toLowerCase()].slice(-4)
-      tronRef.current = nextTron
-      if (nextTron.join('') === TRON_CODE.join('')) {
-        tronRef.current = []
-        setTronMode((prev) => {
-          const next = !prev
-          setTronOverlay(true)
-          setTimeout(() => setTronOverlay(false), 3000)
-          return next
-        })
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
   }, [])
 
   const titleClickRef = useRef(0)
@@ -106,7 +76,7 @@ export function App() {
 
   const [trimEntry, setTrimEntry] = useState<RecordingEntry | null>(null)
 
-  const { isRecording, elapsed, silenceWarning, start, stop } = useRecording(onEntry)
+  const { isRecording, elapsed, silenceWarning, finalizingTrack, start, stop } = useRecording(onEntry)
 
   // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
   const [silenceDismissed, setSilenceDismissed] = useState(false)
@@ -183,7 +153,6 @@ export function App() {
                 trackCount={entries.filter((e) => e.status === 'ok').length}
                 onStart={start}
                 onStop={stop}
-                tron={tronMode}
               />
             </div>
           </CardContent>
@@ -205,7 +174,7 @@ export function App() {
               </TabsList>
 
               <TabsContent value="recordings" className="flex-1 min-h-0 pt-1.5">
-                <RecordingLog entries={entries} onTrimEntry={setTrimEntry} />
+                <RecordingLog entries={entries} onTrimEntry={setTrimEntry} finalizingTrack={finalizingTrack} />
               </TabsContent>
 
               <TabsContent value="settings" className="flex-1 overflow-y-auto pt-1.5 px-4 pb-4">
@@ -271,19 +240,6 @@ export function App() {
               Dismiss
             </button>
           </div>
-        </div>
-      )}
-
-      {tronOverlay && (
-        <div className="tron-overlay fixed inset-0 z-50 flex flex-col items-center justify-center select-none">
-          <div className={`tron-banner-box${tronMode ? '' : ' inactive'}`}>
-            <span className="tron-banner-title">
-              {tronMode ? 'TRON' : 'END OF LINE'}
-            </span>
-          </div>
-          <p className="tron-banner-sub">
-            {tronMode ? 'Greetings, program.' : 'Returning to the grid.'}
-          </p>
         </div>
       )}
     </div>

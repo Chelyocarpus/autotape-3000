@@ -1,8 +1,9 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, screen, nativeTheme, Notification } from 'electron'
-import { join, extname } from 'path'
+import { join, extname, resolve, sep } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { pathToFileURL } from 'url'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { GsmtcService } from './services/GsmtcService'
 import { TrackSplitter } from './services/TrackSplitter'
@@ -128,6 +129,29 @@ function trackWindowState(win: BrowserWindow): () => void {
   }
 }
 
+/**
+ * Confines `autotape-art://` and `autotape-audio://` requests to os.tmpdir(),
+ * the only place their source paths (GSMTC-extracted album art, in-progress
+ * recording WAVs) are ever legitimately written.
+ *
+ * Robustness / pitfalls guarded against:
+ * - Path traversal / arbitrary-file-read: a compromised renderer controls the
+ *   `path` query param directly (it's not restricted by contextIsolation), so
+ *   this must reject anything outside the temp dir rather than trust the caller.
+ * - Prefix bypass: comparing raw strings would let a sibling directory like
+ *   `${tmpdir()}-evil` pass a naive `startsWith(tmpdir())` check, so the temp
+ *   dir is compared with a trailing separator appended.
+ * - `..` segments and relative paths: resolved via `resolve()` before compare,
+ *   so `<tmpdir>/../secret` normalizes to outside the allowed root and is caught.
+ * - Case-insensitive filesystems (Windows/macOS default): compare lower-cased.
+ */
+const TEMP_DIR_WITH_SEP = resolve(tmpdir()).toLowerCase() + sep
+
+function isWithinTempDir(filePath: string): boolean {
+  const resolvedWithSep = resolve(filePath).toLowerCase() + sep
+  return resolvedWithSep.startsWith(TEMP_DIR_WITH_SEP)
+}
+
 function registerArtProtocol(): void {
   protocol.handle('autotape-art', async (request) => {
     try {
@@ -135,6 +159,10 @@ function registerArtProtocol(): void {
       const filePathParam = url.searchParams.get('path')
       if (!filePathParam) {
         return new Response('Missing path', { status: 400 })
+      }
+      if (!isWithinTempDir(filePathParam)) {
+        console.error('[ArtProtocol] Rejected path outside temp dir:', filePathParam)
+        return new Response('Forbidden', { status: 403 })
       }
 
       const fileUrl = pathToFileURL(filePathParam).toString()
@@ -152,6 +180,10 @@ function registerArtProtocol(): void {
       const filePathParam = url.searchParams.get('path')
       if (!filePathParam) {
         return new Response('Missing path', { status: 400 })
+      }
+      if (!isWithinTempDir(filePathParam)) {
+        console.error('[AudioProtocol] Rejected path outside temp dir:', filePathParam)
+        return new Response('Forbidden', { status: 403 })
       }
       const fileUrl = pathToFileURL(filePathParam).toString()
       return net.fetch(fileUrl, { headers: request.headers })
@@ -273,6 +305,10 @@ function wireSplitter(): void {
 
   trackSplitter.on('recordingFinished', (entry) => {
     mainWindow?.webContents.send('recorder:finished', entry)
+  })
+
+  trackSplitter.on('recordingFinalizing', (track) => {
+    mainWindow?.webContents.send('recorder:finalizing', track)
   })
 
   trackSplitter.on('error', (err) => {
@@ -494,4 +530,16 @@ app.on('window-all-closed', async () => {
   gsmtcService.stop()
   // Window state is already flushed in mainWindow.on('closed') above
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Safety net alongside window-all-closed's graceful stop above: covers quit paths
+// that reach here without going through a window close first (OS session logoff,
+// or any future app.quit()/app.exit() call), so a live dshow capture process is
+// force-killed rather than left running past app exit. Idempotent with the
+// graceful stop — killing an already-exited process is a no-op. This can't help
+// against a hard kill of the Electron process itself (Task Manager "End task",
+// a crash) since that terminates before any JS runs; only an OS-level Job Object
+// closes that gap, which is out of scope here.
+app.on('before-quit', () => {
+  AudioRecorder.killAll()
 })

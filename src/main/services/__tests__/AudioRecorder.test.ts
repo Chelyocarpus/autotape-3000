@@ -59,6 +59,33 @@ describe('AudioRecorder capture args', () => {
     expect(captureArgs).not.toContain('-ar')
     expect(captureArgs).not.toContain('44100')
   })
+
+  it('killAll() force-kills every live capture process (e.g. main + pre-warmed recorder)', () => {
+    const main = new AudioRecorder()
+    main.start('dshow:audio=Microphone')
+    const warm = new AudioRecorder()
+    warm.start('dshow:audio=Microphone')
+
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+    const mainProc = spawnMock.mock.results[0].value as FakeChildProcess
+    const warmProc = spawnMock.mock.results[1].value as FakeChildProcess
+
+    AudioRecorder.killAll()
+
+    expect(mainProc.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(warmProc.kill).toHaveBeenCalledWith('SIGKILL')
+  })
+
+  it('killAll() does not re-kill a process that already closed', () => {
+    const recorder = new AudioRecorder()
+    recorder.start('dshow:audio=Microphone')
+    const proc = spawnMock.mock.results[0].value as FakeChildProcess
+    proc.emit('close', 0)
+
+    AudioRecorder.killAll()
+
+    expect(proc.kill).not.toHaveBeenCalled()
+  })
 })
 
 describe('AudioRecorder.retrimFile', () => {
