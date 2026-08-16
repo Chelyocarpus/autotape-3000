@@ -16,7 +16,10 @@ extraResources:
     to: scripts/
     filter:
       - 'gsmtc.ps1'
-      - 'gsmtc_loop.ps1'
+  - from: resources/gsmtc-helper/
+    to: gsmtc-helper/
+    filter:
+      - 'GsmtcHelper.exe'
 win:
   executableName: Autotape3000
   target:

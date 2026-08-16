@@ -71,12 +71,12 @@ export class GsmtcService extends EventEmitter {
 
   private _currentTrack: GsmtcTrack = EMPTY_TRACK
   private _scriptPath: string
-  private _loopScriptPath: string
+  private _helperPath: string
   private _process: ChildProcess | null = null
   private _readline: ReturnType<typeof createInterface> | null = null
+  private _stderrReadline: ReturnType<typeof createInterface> | null = null
   private _restartTimer: ReturnType<typeof setTimeout> | null = null
   private _stopped = false
-  private _intervalMs = 50
   private _sourceFilter = 'auto'
   private _metadataPending = false
   private _metadataPendingPollCount = 0
@@ -106,7 +106,7 @@ export class GsmtcService extends EventEmitter {
     if (!this._stopped) {
       this._consecutiveFailures = 0
       this._clearRestartTimer()
-      this._spawnLoop(this._intervalMs)
+      this._spawnLoop()
     }
   }
 
@@ -163,20 +163,21 @@ export class GsmtcService extends EventEmitter {
 
   constructor() {
     super()
-    const baseDir = app.isPackaged
+    const scriptsDir = app.isPackaged
       ? join(process.resourcesPath, 'scripts')
       : join(__dirname, '..', '..', 'scripts')
-    this._scriptPath = join(baseDir, 'gsmtc.ps1')
-    this._loopScriptPath = join(baseDir, 'gsmtc_loop.ps1')
+    this._scriptPath = join(scriptsDir, 'gsmtc.ps1')
+    this._helperPath = app.isPackaged
+      ? join(process.resourcesPath, 'gsmtc-helper', 'GsmtcHelper.exe')
+      : join(__dirname, '..', '..', 'resources', 'gsmtc-helper', 'GsmtcHelper.exe')
   }
 
-  start(intervalMs = 50): void {
+  start(): void {
     if (this._process || this._stopped === false && this._restartTimer) return
     this._stopped = false
     this._failed = false
-    this._intervalMs = intervalMs
     this._consecutiveFailures = 0
-    this._spawnLoop(intervalMs)
+    this._spawnLoop()
   }
 
   stop(): void {
@@ -186,30 +187,21 @@ export class GsmtcService extends EventEmitter {
       this._readline.close()
       this._readline = null
     }
+    if (this._stderrReadline) {
+      this._stderrReadline.close()
+      this._stderrReadline = null
+    }
     if (this._process) {
       this._process.kill()
       this._process = null
     }
   }
 
-  private _spawnLoop(intervalMs: number): void {
-    const proc = spawn(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-STA',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        this._loopScriptPath,
-        '-SourceAppId',
-        this._sourceFilter || 'auto',
-        '-IntervalMs',
-        String(intervalMs)
-      ],
-      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
-    )
+  private _spawnLoop(): void {
+    const proc = spawn(this._helperPath, [this._sourceFilter || 'auto'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
 
     this._process = proc
     const startedAt = Date.now()
@@ -228,10 +220,24 @@ export class GsmtcService extends EventEmitter {
       }
     })
 
+    // The helper logs its own caught exceptions to stderr (context + exception type/message,
+    // not full stack traces) so a real-world "GSMTC stopped updating" report is diagnosable
+    // from the app's own log instead of only reproducible by manually running the exe.
+    const stderrRl = createInterface({ input: proc.stderr!, crlfDelay: Infinity })
+    this._stderrReadline = stderrRl
+    stderrRl.on('line', (raw) => {
+      const line = raw.trim()
+      if (line) log(`[GsmtcHelper] ${line}`)
+    })
+
     proc.on('exit', () => {
       if (this._readline === rl) {
         this._readline.close()
         this._readline = null
+      }
+      if (this._stderrReadline === stderrRl) {
+        this._stderrReadline.close()
+        this._stderrReadline = null
       }
       if (this._process === proc) this._process = null
       if (this._stopped) return
@@ -253,8 +259,8 @@ export class GsmtcService extends EventEmitter {
         this.emit(
           'error',
           new Error(
-            `GSMTC polling process failed to start ${GsmtcService.MAX_CONSECUTIVE_FAILURES} times in a row — giving up. ` +
-              'Check that PowerShell scripts are allowed to run (antivirus / execution policy) on this machine.'
+            `GSMTC helper process failed to start ${GsmtcService.MAX_CONSECUTIVE_FAILURES} times in a row — giving up. ` +
+              'Check that GsmtcHelper.exe is present and allowed to run (antivirus) on this machine.'
           )
         )
         return
@@ -266,7 +272,7 @@ export class GsmtcService extends EventEmitter {
       )
       this._restartTimer = setTimeout(() => {
         this._restartTimer = null
-        this._spawnLoop(intervalMs)
+        this._spawnLoop()
       }, delay)
     })
 
@@ -323,7 +329,7 @@ export class GsmtcService extends EventEmitter {
   private _handleTrack(track: GsmtcTrack): void {
     const prev = this._currentTrack
     const pos = (track.positionMs ?? 0)
-    log(`[GSMTC] poll  pos=${pos}ms isPlaying=${track.isPlaying} title="${track.title}" artist="${track.artist}" pending=${this._metadataPending}`)
+    log(`[GSMTC] update pos=${pos}ms isPlaying=${track.isPlaying} title="${track.title}" artist="${track.artist}" pending=${this._metadataPending}`)
 
     // Waiting for real metadata after a position-reset early-stop sentinel.
     if (this._metadataPending) {
