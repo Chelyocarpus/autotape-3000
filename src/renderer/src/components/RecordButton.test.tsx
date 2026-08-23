@@ -43,4 +43,22 @@ describe('RecordButton', () => {
     )
     expect(screen.getByText('1:02:05')).toBeInTheDocument()
   })
+
+  it('gives the vinyl spin and record-ring a motion-reduce alternative in both states', () => {
+    const { container: idle } = render(
+      <RecordButton isRecording={false} elapsed={0} trackCount={0} onStart={vi.fn()} onStop={vi.fn()} />
+    )
+    // The spin communicates state, but Play/Stop icon + label color already
+    // do too — so it's safe to freeze under reduced motion.
+    expect(idle.querySelector('svg')?.className.baseVal).toMatch(/motion-reduce:animate-none/)
+    expect(idle.querySelector('svg')?.className.baseVal).toMatch(/motion-safe:animate-\[vinyl-spin/)
+
+    const { container: recording } = render(
+      <RecordButton isRecording elapsed={0} trackCount={0} onStart={vi.fn()} onStop={vi.fn()} />
+    )
+    expect(recording.querySelector('svg')?.className.baseVal).toMatch(/motion-reduce:animate-none/)
+    const button = screen.getAllByRole('button', { name: /stop recording/i })[0]
+    expect(button.className).toMatch(/motion-safe:animate-\[record-ring/)
+    expect(button.className).toMatch(/motion-reduce:shadow-\[/)
+  })
 })

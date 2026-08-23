@@ -9,6 +9,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: 'bg-amber-500 text-zinc-950 shadow font-semibold hover:bg-amber-400',
+        rust: 'bg-[var(--rec-500)] text-zinc-950 shadow font-semibold hover:opacity-90',
         destructive: 'bg-red-600 text-white shadow-sm hover:bg-red-500',
         outline: 'border border-zinc-700 bg-transparent shadow-sm hover:bg-zinc-800 hover:border-zinc-600 text-zinc-100',
         ghost: 'hover:bg-zinc-800 text-zinc-100',

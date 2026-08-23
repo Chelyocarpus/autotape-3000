@@ -4,6 +4,8 @@ import {
   ZoomIn, ZoomOut, Maximize2, AlertTriangle
 } from 'lucide-react'
 import { Button } from './ui/button'
+import { Switch } from './ui/switch'
+import { useFocusTrap } from '../lib/focusTrap'
 import type { RecordingEntry } from '../types'
 
 const MIN_ZOOM = 1
@@ -35,9 +37,44 @@ function clamp(v: number, lo: number, hi: number): number {
 
 // ─── Waveform canvas drawing ───────────────────────────────────────────────
 // viewStart / viewEnd are normalised fractions [0..1] of the full audio duration.
+
+/**
+ * One peak (0..1) per output pixel column, downsampled from the raw channel
+ * data for whatever's currently in view. This is the O(visible samples)
+ * step — for a long recording viewed unzoomed, that's every sample in the
+ * file — so it's computed separately from `drawWaveform` and cached by the
+ * caller, rather than repeated on every animation-frame redraw.
+ *
+ * Robustness / pitfalls guarded against:
+ * - Degenerate view window (viewEnd <= viewStart, e.g. mid-zoom-transition)
+ *   or a zero-width canvas (not yet laid out) — returns an empty array
+ *   instead of dividing by zero or looping with a negative/zero block size.
+ */
+function computePeaks(channelData: Float32Array, viewStart: number, viewEnd: number, width: number): Float32Array {
+  if (viewEnd <= viewStart || width <= 0) return new Float32Array(0)
+
+  const totalSamples = channelData.length
+  const sampleStart = Math.floor(viewStart * totalSamples)
+  const sampleEnd = Math.ceil(viewEnd * totalSamples)
+  const visibleSamples = sampleEnd - sampleStart
+  const blockSize = Math.max(1, Math.floor(visibleSamples / width))
+
+  const peaks = new Float32Array(width)
+  for (let x = 0; x < width; x++) {
+    const sampleIdx = sampleStart + Math.floor((x / width) * visibleSamples)
+    let peak = 0
+    for (let i = 0; i < blockSize; i++) {
+      const abs = Math.abs(channelData[sampleIdx + i] ?? 0)
+      if (abs > peak) peak = abs
+    }
+    peaks[x] = peak
+  }
+  return peaks
+}
+
 function drawWaveform(
   canvas: HTMLCanvasElement,
-  channelData: Float32Array,
+  peaks: Float32Array,
   startFrac: number,
   endFrac: number,
   playFrac: number,
@@ -70,20 +107,10 @@ function drawWaveform(
   ctx.fillStyle = isDark ? 'rgba(226,181,154,0.10)' : 'rgba(226,181,154,0.22)'
   ctx.fillRect(sx, 0, ex - sx, height)
 
-  // Waveform bars — only samples visible in the view window
-  const totalSamples = channelData.length
-  const sampleStart = Math.floor(viewStart * totalSamples)
-  const sampleEnd = Math.ceil(viewEnd * totalSamples)
-  const visibleSamples = sampleEnd - sampleStart
-  const blockSize = Math.max(1, Math.floor(visibleSamples / width))
-
+  // Waveform bars — reuses peaks computed (and cached) by the caller; see
+  // computePeaks for the expensive downsampling step this skips.
   for (let x = 0; x < width; x++) {
-    const sampleIdx = sampleStart + Math.floor((x / width) * visibleSamples)
-    let peak = 0
-    for (let i = 0; i < blockSize; i++) {
-      const abs = Math.abs(channelData[sampleIdx + i] ?? 0)
-      if (abs > peak) peak = abs
-    }
+    const peak = peaks[x] ?? 0
     const barH = Math.max(2, peak * (height - 4))
     ctx.fillStyle = clrAmber
     ctx.fillRect(x, mid - barH / 2, 1, barH)
@@ -138,6 +165,7 @@ function drawWaveform(
 // ─── Main component ────────────────────────────────────────────────────────
 
 export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -145,6 +173,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const playStartTimeRef = useRef<number>(0)
   const playOffsetRef = useRef<number>(0)
   const channelDataRef = useRef<Float32Array | null>(null)
+  const peaksRef = useRef<Float32Array>(new Float32Array(0))
   const animFrameRef = useRef<number>(0)
 
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null)
@@ -156,6 +185,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [saveAsPreset, setSaveAsPreset] = useState(false)
   const [applyToAllSongs, setApplyToAllSongs] = useState(false)
   const [existingPreset, setExistingPreset] = useState<{ startOffsetSec: number; endOffsetSec: number } | null>(null)
@@ -177,6 +207,13 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   useEffect(() => { durationRef.current = duration }, [duration])
   useEffect(() => { zoomRef.current = zoom }, [zoom])
   useEffect(() => { viewOffsetRef.current = viewOffset }, [viewOffset])
+
+  // Escape shouldn't close the dialog mid-save, matching the Cancel button's
+  // own disabled-while-saving state.
+  const handleEscape = useCallback(() => {
+    if (!isSaving) onClose()
+  }, [isSaving, onClose])
+  useFocusTrap(dialogRef, { onEscape: handleEscape })
 
   // ─── Load preset ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -244,7 +281,23 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const viewStart = clamp(viewOffset, 0, 1 - viewSize)
   const viewEnd = viewStart + viewSize
 
-  // ─── Redraw ───────────────────────────────────────────────────────────
+  // ─── Peaks (expensive) ──────────────────────────────────────────────────
+  // Recomputes the downsampled peaks for the current view window. Only
+  // depends on the audio data, the view window (zoom/pan), and the canvas's
+  // pixel width — never on the playhead, so it's kept out of the per-frame
+  // redraw path below.
+  const recomputePeaks = useCallback(() => {
+    const canvas = canvasRef.current
+    const channelData = channelDataRef.current
+    if (!canvas || !channelData) return
+    const vz = zoomRef.current
+    const vs = clamp(viewOffsetRef.current, 0, 1 - 1 / vz)
+    peaksRef.current = computePeaks(channelData, vs, vs + 1 / vz, canvas.width)
+  }, [])
+
+  // ─── Redraw (cheap) ─────────────────────────────────────────────────────
+  // Draws from the cached peaks above — safe to call every animation frame
+  // while the playhead is moving during playback.
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas || !channelDataRef.current) return
@@ -253,7 +306,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     const vs = clamp(viewOffsetRef.current, 0, 1 - 1 / vz)
     drawWaveform(
       canvas,
-      channelDataRef.current,
+      peaksRef.current,
       dur > 0 ? startSecRef.current / dur : 0,
       dur > 0 ? endSecRef.current / dur : 1,
       dur > 0 ? playheadSec / dur : 0,
@@ -263,20 +316,45 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     )
   }, [isDark, playheadSec])
 
-  useEffect(() => { redraw() }, [startSec, endSec, playheadSec, duration, isDark, audioBuffer, zoom, viewOffset, redraw])
+  // Always-current redraw, for callers (the resize observer below) that
+  // must NOT re-subscribe every time `redraw`'s identity changes — which it
+  // does on every playhead tick, since it closes over the current playhead.
+  const redrawRef = useRef(redraw)
+  useEffect(() => { redrawRef.current = redraw }, [redraw])
+
+  // Peaks only need recomputing when the audio data or the view window
+  // changes — not on every playhead tick (60/sec while playing) or while
+  // dragging a trim handle, both of which only move overlays/lines that
+  // `redraw` draws on top of the cached peaks.
+  useEffect(() => {
+    recomputePeaks()
+    redraw()
+    // recomputePeaks/redraw intentionally omitted: redraw's identity churns
+    // every playhead tick, and re-running this expensive effect on every
+    // tick is exactly what it exists to avoid.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioBuffer, zoom, viewOffset])
+
+  // Cheap redraw for everything else — reuses the peaks cached above.
+  useEffect(() => { redraw() }, [startSec, endSec, playheadSec, duration, isDark, redraw])
 
   // ─── Canvas resize observer ───────────────────────────────────────────
+  // Keyed on isLoading/loadError (which gate whether <canvas> is even in the
+  // DOM) rather than on `redraw`, so this effect — and the ResizeObserver it
+  // creates — doesn't tear down and rebuild on every playhead tick, and does
+  // reliably attach once the canvas actually mounts after a successful load.
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ro = new ResizeObserver(() => {
       canvas.width = Math.round(canvas.offsetWidth * window.devicePixelRatio)
       canvas.height = Math.round(canvas.offsetHeight * window.devicePixelRatio)
-      redraw()
+      recomputePeaks()
+      redrawRef.current()
     })
     ro.observe(canvas)
     return () => ro.disconnect()
-  }, [redraw])
+  }, [isLoading, loadError, recomputePeaks])
 
   // ─── Playback ─────────────────────────────────────────────────────────
   const stopPlayback = useCallback(() => {
@@ -406,6 +484,32 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
 
   const onPointerUp = useCallback(() => { dragRef.current = null }, [])
 
+  // Arrow-key nudging for keyboard-only trim adjustment (mirrors drag's 0.05s min gap)
+  const onHandleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>, handle: 'start' | 'end') => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+      e.preventDefault()
+      const dur = durationRef.current
+      const step = e.shiftKey ? 1 : 0.1
+      if (handle === 'start') {
+        let next = startSecRef.current
+        if (e.key === 'ArrowLeft') next -= step
+        else if (e.key === 'ArrowRight') next += step
+        else if (e.key === 'Home') next = 0
+        else next = endSecRef.current - 0.05
+        setStartSec(parseFloat(clamp(next, 0, endSecRef.current - 0.05).toFixed(3)))
+      } else {
+        let next = endSecRef.current
+        if (e.key === 'ArrowLeft') next -= step
+        else if (e.key === 'ArrowRight') next += step
+        else if (e.key === 'End') next = dur
+        else next = startSecRef.current + 0.05
+        setEndSec(parseFloat(clamp(next, startSecRef.current + 0.05, dur).toFixed(3)))
+      }
+    },
+    []
+  )
+
   // Click on empty waveform → move nearest handle; middle-button → pan
   const onWaveformPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -425,6 +529,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const handleSave = useCallback(async () => {
     if (isSaving || !entry.filePath) return
     setIsSaving(true)
+    setSaveError(null)
     try {
       const result = await window.electronAPI.trimApply(entry.filePath, startSec, endSec)
       if (saveAsPreset) {
@@ -438,6 +543,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
       onSaved({ ...entry, durationSec: result.durationSec })
     } catch (err: unknown) {
       console.error('[SongTrimModal] save failed', err)
+      setSaveError((err instanceof Error ? err.message : String(err)) || 'Could not save the trimmed file.')
       setIsSaving(false)
     }
   }, [isSaving, entry, startSec, endSec, saveAsPreset, applyToAllSongs, duration, onSaved])
@@ -465,7 +571,12 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   // ─── Render ───────────────────────────────────────────────────────────
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Trim recording"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm outline-none"
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
@@ -600,15 +711,24 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
                 {/* Start handle */}
                 {startInView && (
                   <div
-                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group"
+                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group focus:outline-none"
                     data-left={`${startCanvasPct}pct`}
                     style={{ left: `${startCanvasPct}%` }} // eslint-disable-line react/forbid-dom-props
                     onPointerDown={(e) => onPointerDown(e, 'start')}
+                    tabIndex={0}
+                    role="slider"
+                    aria-label="Trim start"
+                    aria-valuemin={0}
+                    aria-valuemax={duration}
+                    aria-valuenow={startSec}
+                    aria-valuetext={formatTime(startSec)}
+                    aria-orientation="horizontal"
+                    onKeyDown={(e) => onHandleKeyDown(e, 'start')}
                   >
                     {/* full-height line */}
                     <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-amber-400 group-hover:bg-amber-300 transition-colors opacity-80" />
                     {/* centred grip knob */}
-                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5">
+                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5 group-focus-visible:ring-2 group-focus-visible:ring-emerald-500 group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-zinc-950">
                       <div className="w-0.5 h-3 bg-amber-500 rounded-full" />
                     </div>
                   </div>
@@ -617,15 +737,24 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
                 {/* End handle */}
                 {endInView && (
                   <div
-                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group"
+                    className="trim-handle absolute top-0 bottom-0 w-5 flex items-center justify-center cursor-ew-resize z-10 group focus:outline-none"
                     data-left={`${endCanvasPct}pct`}
                     style={{ left: `${endCanvasPct}%` }} // eslint-disable-line react/forbid-dom-props
                     onPointerDown={(e) => onPointerDown(e, 'end')}
+                    tabIndex={0}
+                    role="slider"
+                    aria-label="Trim end"
+                    aria-valuemin={0}
+                    aria-valuemax={duration}
+                    aria-valuenow={endSec}
+                    aria-valuetext={formatTime(endSec)}
+                    aria-orientation="horizontal"
+                    onKeyDown={(e) => onHandleKeyDown(e, 'end')}
                   >
                     {/* full-height line */}
                     <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-amber-400 group-hover:bg-amber-300 transition-colors opacity-80" />
                     {/* centred grip knob */}
-                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5">
+                    <div className="relative w-4 h-7 rounded bg-white/90 group-hover:bg-white transition-colors shadow-lg flex flex-col items-center justify-center gap-0.5 group-focus-visible:ring-2 group-focus-visible:ring-emerald-500 group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-zinc-950">
                       <div className="w-0.5 h-3 bg-amber-500 rounded-full" />
                     </div>
                   </div>
@@ -643,17 +772,17 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
                 <div className="flex flex-col items-start">
                   <span className="text-[10px] font-mono text-amber-400">{formatTime(startSec)}</span>
                   {startOffsetSec > 0.001 && (
-                    <span className="text-[9px] font-mono text-zinc-600">{formatOffset(startOffsetSec, '+')} from start</span>
+                    <span className="text-[10px] font-mono text-zinc-600">{formatOffset(startOffsetSec, '+')} from start</span>
                   )}
                 </div>
                 <div className="flex flex-col items-center">
                   <span className="text-[10px] font-mono text-zinc-500">{formatTime(trimDuration)}</span>
-                  {isPlaying && <span className="text-[9px] font-mono text-zinc-600">{formatTime(playheadSec)}</span>}
+                  {isPlaying && <span className="text-[10px] font-mono text-zinc-600">{formatTime(playheadSec)}</span>}
                 </div>
                 <div className="flex flex-col items-end">
                   <span className="text-[10px] font-mono text-amber-400">{formatTime(endSec)}</span>
                   {endOffsetSec > 0.001 && (
-                    <span className="text-[9px] font-mono text-zinc-600">{formatOffset(endOffsetSec, '-')} from end</span>
+                    <span className="text-[10px] font-mono text-zinc-600">{formatOffset(endOffsetSec, '-')} from end</span>
                   )}
                 </div>
               </div>
@@ -685,42 +814,44 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
         )}
 
         {/* ── Preset options ── */}
-        <div className="px-5 py-3 border-t border-zinc-800/60 flex flex-col gap-2">
-          <label className="flex items-center gap-2 cursor-pointer group select-none">
-            <input
-              type="checkbox"
-              className="w-3.5 h-3.5 accent-amber-400"
-              checked={saveAsPreset}
-              onChange={(e) => setSaveAsPreset(e.target.checked)}
-            />
-            <span className="text-xs text-zinc-400 group-hover:text-zinc-200 transition-colors">
+        <div className="px-5 py-3 border-t border-zinc-800/60 flex flex-col gap-2.5">
+          <div className="flex items-center gap-2.5 group">
+            <Switch id="save-as-preset" checked={saveAsPreset} onCheckedChange={setSaveAsPreset} />
+            <label
+              htmlFor="save-as-preset"
+              className="text-xs text-zinc-400 group-hover:text-zinc-200 transition-colors cursor-pointer select-none"
+            >
               Save as preset for future recordings
               {saveAsPreset && (startOffsetSec > 0.001 || endOffsetSec > 0.001) && (
                 <span className="ml-1 font-mono text-zinc-600">
                   ({formatOffset(startOffsetSec, '+')} / {formatOffset(endOffsetSec, '-')})
                 </span>
               )}
-            </span>
-          </label>
-          {saveAsPreset && (
-            <label className="flex items-center gap-2 cursor-pointer group select-none ml-5">
-              <input
-                type="checkbox"
-                className="w-3.5 h-3.5 accent-amber-400"
-                checked={applyToAllSongs}
-                onChange={(e) => setApplyToAllSongs(e.target.checked)}
-              />
-              <span className="text-xs text-zinc-500 group-hover:text-zinc-300 transition-colors">
-                Apply as global default (all songs without a specific preset)
-              </span>
             </label>
+          </div>
+          {saveAsPreset && (
+            <div className="flex items-center gap-2.5 group ml-5">
+              <Switch id="apply-to-all-songs" checked={applyToAllSongs} onCheckedChange={setApplyToAllSongs} />
+              <label
+                htmlFor="apply-to-all-songs"
+                className="text-xs text-zinc-500 group-hover:text-zinc-300 transition-colors cursor-pointer select-none"
+              >
+                Apply as global default (all songs without a specific preset)
+              </label>
+            </div>
           )}
         </div>
 
         {/* ── Actions ── */}
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-zinc-800">
+          {saveError && (
+            <div className="flex items-center gap-1.5 mr-auto text-xs text-[var(--rec-500)] animate-[on-air-in_0.18s_ease_forwards]">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>{saveError}</span>
+            </div>
+          )}
           <Button variant="outline" size="sm" onClick={onClose} disabled={isSaving}>Cancel</Button>
-          <Button size="sm" onClick={handleSave} disabled={isSaving || isLoading || !!loadError}>
+          <Button variant="rust" size="sm" onClick={handleSave} disabled={isSaving || isLoading || !!loadError}>
             {isSaving ? (
               <><Loader2 className="w-3.5 h-3.5 animate-spin" />Trimming…</>
             ) : (

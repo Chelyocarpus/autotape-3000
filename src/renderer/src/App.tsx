@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs'
 import { Card, CardContent } from './components/ui/card'
 import { Separator } from './components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
+import { useFocusTrap } from './lib/focusTrap'
 import { useGsmtcTrack, useRecording } from './hooks/useIpc'
 import type { RecordingEntry } from './types'
 
@@ -61,6 +62,9 @@ export function App() {
   const [showOnboarding, setShowOnboarding] = useState(
     () => !localStorage.getItem(ONBOARDING_KEY)
   )
+  // True only when the wizard is reopened from Settings — a genuine first run has
+  // no way out of setup, so the close affordance stays suppressed for it.
+  const [onboardingCancelable, setOnboardingCancelable] = useState(false)
 
   const MAX_LOG_ENTRIES = 500
   const onEntry = useCallback((e: RecordingEntry) => {
@@ -80,16 +84,9 @@ export function App() {
 
   // Allow the user to manually dismiss the silence dialog; it re-shows if silence returns
   const [silenceDismissed, setSilenceDismissed] = useState(false)
-  const silenceDismissRef = useRef<HTMLButtonElement>(null)
   const showSilenceDialog = isRecording && silenceWarning && !silenceDismissed
+  const dismissSilence = useCallback(() => setSilenceDismissed(true), [])
 
-  // Auto-focus the dismiss button when the dialog opens so keyboard users can
-  // press Enter to dismiss immediately.
-  useEffect(() => {
-    if (showSilenceDialog && silenceDismissRef.current) {
-      silenceDismissRef.current.focus()
-    }
-  }, [showSilenceDialog])
   // Re-arm when silence warning changes (new warning after dismissal should show again)
   const prevSilenceWarning = useRef(false)
   useEffect(() => {
@@ -104,7 +101,7 @@ export function App() {
     >
       {/* Title bar drag region — width is inset to leave room for the native
           min/max/close buttons Windows draws via titleBarOverlay */}
-      <div className="h-8 shrink-0 flex items-center justify-between px-4 app-drag-region app-titlebar">
+      <header className="h-8 shrink-0 flex items-center justify-between px-4 app-drag-region app-titlebar">
         <div className="flex items-center gap-2 select-none">
           <svg viewBox="0 0 256 256" className="w-4 h-4 shrink-0 text-zinc-500" fill="currentColor" aria-hidden="true">
               <path d="M224,44H32A20,20,0,0,0,12,64V192a20,20,0,0,0,20,20H224a20,20,0,0,0,20-20V64A20,20,0,0,0,224,44Zm-4,144H183l-12.6-16.8A8,8,0,0,0,164,168H92a8,8,0,0,0-6.4,3.2L73,188H36V68H220ZM82,152h92a34,34,0,0,0,0-68H82a34,34,0,0,0,0,68Zm0-44a10,10,0,1,1-10,10A10,10,0,0,1,82,108Zm102,10a10,10,0,1,1-10-10A10,10,0,0,1,184,118Zm-42.5,10h-27a34.08,34.08,0,0,0,0-20h27a34.08,34.08,0,0,0,0,20Z"/>
@@ -116,7 +113,7 @@ export function App() {
             Autotape 3000
           </button>
           {titleSecret && (
-            <span className="text-[9px] text-zinc-600 tracking-widest uppercase animate-[on-air-in_0.2s_ease_forwards]">
+            <span className="text-[0.65625rem] text-zinc-600 tracking-widest uppercase animate-[on-air-in_0.2s_ease_forwards]">
               Tuned in.
             </span>
           )}
@@ -126,6 +123,7 @@ export function App() {
             <button
               className="app-no-drag w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
               onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
             </button>
@@ -134,16 +132,17 @@ export function App() {
             {theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           </TooltipContent>
         </Tooltip>
-      </div>
+      </header>
 
       {/* Main content — sidebar + full-height list */}
-      <div className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
+      <main className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
 
         {/* Left sidebar: Now Playing + Record Button — the focal point */}
         <Card className="w-52 shrink-0 flex flex-col overflow-hidden">
-          <CardContent className="flex-1 flex flex-col items-center pt-5 pb-5 px-4 gap-4 min-h-0 overflow-hidden">
+          <CardContent className="sidebar-content flex-1 flex flex-col items-center pt-5 pb-5 px-4 gap-4 min-h-0 overflow-hidden">
+            <h2 className="sr-only">Now Playing &amp; Record</h2>
             <div className="shrink-0 w-full flex flex-col items-center">
-              <NowPlaying layout="vertical" track={track} />
+              <NowPlaying track={track} />
             </div>
             <Separator className="w-full shrink-0" />
             <div className="shrink min-h-32 overflow-hidden flex flex-col items-center w-full">
@@ -161,6 +160,7 @@ export function App() {
         {/* Right panel: full-height Recordings + Settings */}
         <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <CardContent className="p-0 pt-0 flex-1 flex flex-col min-h-0 overflow-hidden">
+            <h2 className="sr-only">Recordings &amp; Settings</h2>
             <Tabs defaultValue="recordings" className="flex flex-col flex-1 min-h-0">
               <TabsList className="w-full shrink-0 px-4">
                 <TabsTrigger value="recordings">
@@ -178,14 +178,32 @@ export function App() {
               </TabsContent>
 
               <TabsContent value="settings" className="flex-1 overflow-y-auto pt-1.5 px-4 pb-4">
-                <SettingsPanel onOpenWizard={() => setShowOnboarding(true)} />
+                <SettingsPanel
+                  onOpenWizard={() => {
+                    setOnboardingCancelable(true)
+                    setShowOnboarding(true)
+                  }}
+                />
               </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
-      </div>
+      </main>
       {showOnboarding && (
-        <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
+        <OnboardingWizard
+          onComplete={() => {
+            setShowOnboarding(false)
+            setOnboardingCancelable(false)
+          }}
+          onCancel={
+            onboardingCancelable
+              ? () => {
+                  setShowOnboarding(false)
+                  setOnboardingCancelable(false)
+                }
+              : undefined
+          }
+        />
       )}
 
       {trimEntry && (
@@ -199,50 +217,61 @@ export function App() {
         />
       )}
 
-      {showSilenceDialog && (
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="silence-dialog-title"
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setSilenceDismissed(true)
-          }}
-        >
-          {/* Backdrop — click to dismiss */}
-          <div
-            className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm"
-            onClick={() => setSilenceDismissed(true)}
-          />
-
-          {/* Dialog card */}
-          <div className="relative z-10 w-80 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl p-6 flex flex-col gap-4 animate-[on-air-in_0.18s_ease_forwards]">
-            {/* Icon + title */}
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 ring-1 ring-amber-500/30">
-                <AlertTriangle className="h-5 w-5 text-amber-400" />
-              </span>
-              <div>
-                <p id="silence-dialog-title" className="text-sm font-semibold text-zinc-100">No audio detected</p>
-                <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
-                  Autotape is recording but picking up silence. Check that your audio device in Settings matches where your music is playing.
-                </p>
-              </div>
-            </div>
-
-            {/* Dismiss */}
-            <button
-              ref={silenceDismissRef}
-              className="self-end text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 rounded"
-              onClick={() => setSilenceDismissed(true)}
-              aria-label="Dismiss warning"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      {showSilenceDialog && <SilenceDialog onDismiss={dismissSilence} />}
     </div>
     </TooltipProvider>
+  )
+}
+
+// ─── Silence warning dialog ────────────────────────────────────────────────
+// A separate component (rather than inline JSX) so useFocusTrap's mount/
+// unmount effects align with the dialog's actual show/hide lifecycle —
+// App itself never unmounts, so the hook couldn't otherwise tell an "opened"
+// from a "still open" render.
+
+export function SilenceDialog({ onDismiss }: { onDismiss: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, { onEscape: onDismiss })
+
+  return (
+    <div
+      ref={dialogRef}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="silence-dialog-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center outline-none"
+    >
+      {/* Backdrop — click to dismiss */}
+      <div
+        className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm"
+        onClick={onDismiss}
+      />
+
+      {/* Dialog card */}
+      <div className="relative z-10 w-80 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl p-6 flex flex-col gap-4 animate-[on-air-in_0.18s_ease_forwards]">
+        {/* Icon + title */}
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--rec-500)]/15 ring-1 ring-[var(--rec-500)]/30">
+            <AlertTriangle className="h-5 w-5 text-[var(--rec-500)]" />
+          </span>
+          <div>
+            <p id="silence-dialog-title" className="text-sm font-semibold text-zinc-100">Tape's rolling, but nothing's coming through</p>
+            <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
+              Autotape is recording but picking up silence. Check that your audio device in Settings matches where your music is playing.
+            </p>
+          </div>
+        </div>
+
+        {/* Dismiss */}
+        <button
+          className="self-end text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rec-500)]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 rounded"
+          onClick={onDismiss}
+          aria-label="Dismiss warning"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
   )
 }

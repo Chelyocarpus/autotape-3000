@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingLog } from './RecordingLog'
@@ -43,10 +43,10 @@ describe('RecordingLog', () => {
     expect(screen.getByText('3:05')).toBeInTheDocument() // formatDuration(185)
 
     expect(screen.getByText('Skipped Song')).toBeInTheDocument()
-    expect(screen.getByText('skipped')).toBeInTheDocument()
+    expect(screen.getByText('Skipped')).toBeInTheDocument()
 
     expect(screen.getByText('Broken Song')).toBeInTheDocument()
-    expect(screen.getByText('error')).toBeInTheDocument()
+    expect(screen.getByText('Error')).toBeInTheDocument()
   })
 
   it('only shows trim/open-folder actions for entries with a filePath', () => {
@@ -68,5 +68,94 @@ describe('RecordingLog', () => {
     renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
     const titles = screen.getAllByText(/recorded$/).map((el) => el.textContent)
     expect(titles).toEqual(['Second recorded', 'First recorded'])
+  })
+
+  it('filters rows by title or artist as the user types', () => {
+    const entries: RecordingEntry[] = [
+      entry({ id: '1', title: 'Midnight City', artist: 'M83' }),
+      entry({ id: '2', title: 'Instant Crush', artist: 'Daft Punk' })
+    ]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    fireEvent.change(screen.getByPlaceholderText(/search recordings/i), {
+      target: { value: 'daft' }
+    })
+
+    expect(screen.getByText('Instant Crush')).toBeInTheDocument()
+    expect(screen.queryByText('Midnight City')).not.toBeInTheDocument()
+  })
+
+  it('shows a no-matches state with a way to clear the search', () => {
+    const entries: RecordingEntry[] = [entry({ id: '1', title: 'Midnight City', artist: 'M83' })]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    fireEvent.change(screen.getByPlaceholderText(/search recordings/i), {
+      target: { value: 'nonexistent track' }
+    })
+
+    expect(screen.getByText(/no matches/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Clear search'))
+    expect(screen.getByText('Midnight City')).toBeInTheDocument()
+  })
+
+  it('shows the no-matches state even while a track is finalizing', () => {
+    const entries: RecordingEntry[] = [entry({ id: '1', title: 'Midnight City', artist: 'M83' })]
+    renderWithTooltip(
+      <RecordingLog
+        entries={entries}
+        onTrimEntry={vi.fn()}
+        finalizingTrack={{ artist: 'Other', title: 'Currently Recording', album: '', albumArtFile: '', isPlaying: true }}
+      />
+    )
+
+    fireEvent.change(screen.getByPlaceholderText(/search recordings/i), {
+      target: { value: 'nonexistent track' }
+    })
+
+    expect(screen.getByText('Currently Recording')).toBeInTheDocument()
+    expect(screen.getByText(/no matches/i)).toBeInTheDocument()
+  })
+
+  it('does not render a status icon for successful recordings', () => {
+    const entries: RecordingEntry[] = [entry({ id: '1', title: 'Clean Take', status: 'ok', durationSec: 90 })]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    expect(screen.getByText('Clean Take')).toBeInTheDocument()
+    expect(screen.queryByText('ok')).not.toBeInTheDocument()
+  })
+
+  it('formats a duration over an hour with an hour component', () => {
+    const entries: RecordingEntry[] = [entry({ id: '1', title: 'Long Mix', status: 'ok', durationSec: 7530 })]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    expect(screen.getByText('2:05:30')).toBeInTheDocument()
+  })
+
+  it('animates only the newly-arrived row, never rows that were already there', () => {
+    const initial: RecordingEntry[] = [entry({ id: '1', title: 'Old Song' })]
+    const { rerender } = renderWithTooltip(<RecordingLog entries={initial} onTrimEntry={vi.fn()} />)
+
+    rerender(
+      <TooltipProvider>
+        <RecordingLog entries={[...initial, entry({ id: '2', title: 'New Song' })]} onTrimEntry={vi.fn()} />
+      </TooltipProvider>
+    )
+
+    const newRow = screen.getByText('New Song').closest('div[class*="rounded-lg"]')
+    const oldRow = screen.getByText('Old Song').closest('div[class*="rounded-lg"]')
+    expect(newRow?.className).toMatch(/entry-in/)
+    expect(oldRow?.className).not.toMatch(/entry-in/)
+  })
+
+  it('virtualizes a large list instead of mounting every row', () => {
+    const entries: RecordingEntry[] = Array.from({ length: 500 }, (_, i) =>
+      entry({ id: String(i), title: `Track ${i}` })
+    )
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    // The newest entries render first (list order); a row from the far end
+    // of the reversed list should not be mounted at all off-screen.
+    expect(screen.getByText('Track 499')).toBeInTheDocument()
+    expect(screen.queryByText('Track 0')).not.toBeInTheDocument()
   })
 })

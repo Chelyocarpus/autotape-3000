@@ -25,7 +25,7 @@ describe('NowPlaying', () => {
     expect(screen.getByText(/paused/i)).toBeInTheDocument()
   })
 
-  it('renders track metadata and artwork when a track is actively playing (horizontal layout)', () => {
+  it('renders track metadata and artwork when a track is actively playing', () => {
     render(<NowPlaying track={playingTrack} />)
     expect(screen.getByText('One More Time')).toBeInTheDocument()
     expect(screen.getByText('Daft Punk')).toBeInTheDocument()
@@ -35,11 +35,5 @@ describe('NowPlaying', () => {
       'src',
       expect.stringContaining('autotape-art://image?path=')
     )
-  })
-
-  it('renders the same active state in the vertical layout used by the sidebar', () => {
-    render(<NowPlaying track={playingTrack} layout="vertical" />)
-    expect(screen.getByText('One More Time')).toBeInTheDocument()
-    expect(screen.getByAltText('Album art')).toBeInTheDocument()
   })
 })

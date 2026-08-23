@@ -1,17 +1,24 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import type { ComponentType } from 'react'
 import {
   Loader2,
   FolderOpen,
   ChevronRight,
   ChevronLeft,
+  Check,
   Mic2,
   Disc,
   ExternalLink,
+  AlertTriangle,
+  X,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { Select, SelectContent, SelectTrigger, SelectValue } from './ui/select'
 import { cn } from '../lib/utils'
+import { isLoopbackDevice } from '../lib/audioDevice'
+import { useFocusTrap } from '../lib/focusTrap'
+import { DeviceSelectItems } from './DeviceSelectItems'
 import { useSettings, useAudioDevices } from '../hooks/useIpc'
 import type { AudioDevice, UserSettings } from '../types'
 
@@ -21,25 +28,40 @@ const STEP_LABELS = ['Welcome', 'Audio Device', 'Save To'] as const
 
 // ─── Root wizard ──────────────────────────────────────────────────────────────
 
-export function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
+export function OnboardingWizard({
+  onComplete,
+  onCancel
+}: {
+  onComplete: () => void
+  /** Omit to suppress the close affordance entirely — reserved for true first-run, where setup can't be skipped. */
+  onCancel?: () => void
+}) {
   const [step, setStep] = useState(0)
   const { settings, save } = useSettings()
   const devices = useAudioDevices()
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   const handleComplete = useCallback(() => {
     localStorage.setItem(ONBOARDING_KEY, '1')
     onComplete()
   }, [onComplete])
 
+  // Each step swaps in different focusable content, so re-run initial focus
+  // whenever the step changes — the previous target no longer exists once
+  // the step body swaps.
+  useFocusTrap(dialogRef, { onEscape: onCancel, refocusKey: step })
+
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="First-time setup"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm outline-none"
     >
       <div
-        className="w-115 rounded-2xl overflow-hidden flex flex-col wizard-card"
+        className="w-115 rounded-2xl overflow-hidden flex flex-col wizard-card animate-[on-air-in_0.25s_ease_forwards]"
       >
         {/* Step indicator header */}
         <div
@@ -77,6 +99,15 @@ export function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
               )}
             </div>
           ))}
+          {onCancel && (
+            <button
+              className="ml-auto text-zinc-500 hover:text-zinc-300 transition-colors"
+              onClick={onCancel}
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Step body */}
@@ -163,13 +194,6 @@ interface DeviceStepProps {
   onBack: () => void
 }
 
-const LOOPBACK_HINTS = ['stereo mix', 'wave out', 'what u hear', 'loopback', 'virtual cable', 'vb-audio']
-
-function isLoopbackDevice(name: string): boolean {
-  const lower = name.toLowerCase()
-  return LOOPBACK_HINTS.some((hint) => lower.includes(hint))
-}
-
 function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps) {
   const [selectedId, setSelectedId] = useState<string>(() => settings?.deviceId ?? 'default')
 
@@ -181,7 +205,6 @@ function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps
   }, [settings, selectedId])
 
   const loopbackDevices = devices.filter((d) => isLoopbackDevice(d.name))
-  const otherDevices = devices.filter((d) => !isLoopbackDevice(d.name))
 
   const handleContinue = async () => {
     if (settings && selectedId) {
@@ -210,37 +233,36 @@ function DeviceStep({ devices, settings, save, onNext, onBack }: DeviceStepProps
         </div>
       ) : (
         <div className="flex flex-col gap-2">
+          {loopbackDevices.length === 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                No virtual audio cable detected, so every device below captures all system audio,
+                not just your music. For isolated captures, install one like{' '}
+                <a
+                  href="https://vb-audio.com/Cable/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-amber-200"
+                >
+                  VB-Audio Virtual Cable
+                </a>
+                , route your player through it, then pick it below — or continue with a device now
+                and revisit this in Settings later.
+              </span>
+            </div>
+          )}
+
           <Select value={selectedId} onValueChange={setSelectedId}>
             <SelectTrigger>
               <SelectValue placeholder="Select a capture device…" />
             </SelectTrigger>
             <SelectContent>
-              {loopbackDevices.length > 0 && (
-                <>
-                  <div className="px-2 py-1.5 text-[10px] font-semibold tracking-wider text-amber-500 uppercase">
-                    Recommended
-                  </div>
-                  {loopbackDevices.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                  {otherDevices.length > 0 && (
-                    <div className="px-2 py-1.5 text-[10px] font-semibold tracking-wider text-zinc-600 uppercase mt-1">
-                      Other devices
-                    </div>
-                  )}
-                </>
-              )}
-              {otherDevices.map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
-                </SelectItem>
-              ))}
+              <DeviceSelectItems devices={devices} />
             </SelectContent>
           </Select>
 
-          {selectedId && selectedId !== 'default' && !isLoopbackDevice(devices.find((d) => d.id === selectedId)?.name ?? '') && (
+          {loopbackDevices.length > 0 && selectedId && !isLoopbackDevice(devices.find((d) => d.id === selectedId)?.name ?? '') && (
             <p className="text-[11px] text-zinc-600 leading-relaxed">
               For best results, route your music player through a virtual cable (e.g. VB-Audio) so
               only music is captured, not all system audio.
@@ -333,7 +355,8 @@ function OutputStep({ settings, save, onComplete, onBack }: OutputStepProps) {
         onBack={onBack}
         onNext={handleComplete}
         nextDisabled={!dir.trim()}
-        nextLabel="Start recording"
+        nextLabel="Finish setup"
+        nextIcon={Check}
       />
     </div>
   )
@@ -346,11 +369,13 @@ function NavRow({
   onNext,
   nextDisabled,
   nextLabel,
+  nextIcon: NextIcon = ChevronRight,
 }: {
   onBack: () => void
   onNext: () => void
   nextDisabled?: boolean
   nextLabel: string
+  nextIcon?: ComponentType<{ className?: string }>
 }) {
   return (
     <div className="flex items-center justify-between mt-auto pt-2">
@@ -360,7 +385,7 @@ function NavRow({
       </Button>
       <Button size="sm" onClick={onNext} disabled={nextDisabled} className="gap-1.5">
         {nextLabel}
-        <ChevronRight className="w-3.5 h-3.5" />
+        <NextIcon className="w-3.5 h-3.5" />
       </Button>
     </div>
   )

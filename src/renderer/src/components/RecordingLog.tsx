@@ -1,7 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, XCircle, SkipForward, ExternalLink, Music2, Scissors, Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import {
+  XCircle,
+  SkipForward,
+  ExternalLink,
+  Music2,
+  Scissors,
+  Loader2,
+  Search,
+  X,
+  Clock
+} from 'lucide-react'
 import { ScrollArea } from './ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { Input } from './ui/input'
+import { cn } from '@/lib/utils'
 import type { GsmtcTrack, RecordingEntry } from '../types'
 
 interface RecordingLogProps {
@@ -12,15 +25,34 @@ interface RecordingLogProps {
 }
 
 function formatDuration(sec: number): string {
-  const m = Math.floor(sec / 60)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+// Compact capture-provenance stamp: just a time for today's recordings, otherwise a short
+// date — full precision is still available via the element's title tooltip.
+function formatRecordedAt(ms: number): string {
+  const d = new Date(ms)
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+  const sameYear = d.getFullYear() === now.getFullYear()
+  return d.toLocaleDateString(
+    undefined,
+    sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }
+  )
+}
+
 function StatusIcon({ status }: { status: RecordingEntry['status'] }) {
-  if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
   if (status === 'error') return <XCircle className="w-4 h-4 text-[var(--rec-500)] shrink-0" />
-  return <SkipForward className="w-4 h-4 text-zinc-500 shrink-0" />
+  if (status === 'skipped') return <SkipForward className="w-4 h-4 text-zinc-500 shrink-0" />
+  return null
 }
 
 function RecordingThumb({ entry }: { entry: RecordingEntry }) {
@@ -52,18 +84,18 @@ function RecordingThumb({ entry }: { entry: RecordingEntry }) {
 
 function FinalizingRow({ track }: { track: GsmtcTrack }) {
   return (
-    <div className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 overflow-hidden">
+    <div className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 overflow-hidden bg-zinc-800/40 border border-amber-500/25">
       <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-amber-500/50" />
 
-      <div className="w-9 h-9 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40">
+      <div className="w-10 h-10 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40">
         <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
       </div>
 
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium text-zinc-200 truncate leading-snug">
+        <p className="text-[0.875rem] font-semibold text-zinc-200 truncate leading-snug" title={track.title || 'Unknown'}>
           {track.title || 'Unknown'}
         </p>
-        <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5">{track.artist}</p>
+        <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5" title={track.artist}>{track.artist}</p>
       </div>
 
       <span className="text-[11px] text-zinc-500 tracking-wide shrink-0">encoding…</span>
@@ -71,106 +103,277 @@ function FinalizingRow({ track }: { track: GsmtcTrack }) {
   )
 }
 
-export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: RecordingLogProps) {
-  if (entries.length === 0 && !finalizingTrack) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 pb-6">
-        <div className="w-14 h-14 rounded-xl bg-zinc-800/60 flex items-center justify-center ring-1 ring-zinc-700/30">
-          <svg
-            viewBox="0 0 256 256"
-            className="w-7 h-7 text-zinc-600"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <path d="M224,44H32A20,20,0,0,0,12,64V192a20,20,0,0,0,20,20H224a20,20,0,0,0,20-20V64A20,20,0,0,0,224,44Zm-4,144H183l-12.6-16.8A8,8,0,0,0,164,168H92a8,8,0,0,0-6.4,3.2L73,188H36V68H220ZM82,152h92a34,34,0,0,0,0-68H82a34,34,0,0,0,0,68Zm0-44a10,10,0,1,1-10,10A10,10,0,0,1,82,108Zm102,10a10,10,0,1,1-10-10A10,10,0,0,1,184,118Zm-42.5,10h-27a34.08,34.08,0,0,0,0-20h27a34.08,34.08,0,0,0,0,20Z"/>
-          </svg>
-        </div>
-        <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">No tracks yet</p>
-          <p className="text-[11px] text-zinc-600 max-w-40 leading-relaxed">Hit record to start building your collection.</p>
-        </div>
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 pb-6">
+      <div className="w-14 h-14 rounded-xl bg-zinc-800/60 flex items-center justify-center ring-1 ring-zinc-700/30">
+        <svg
+          viewBox="0 0 256 256"
+          className="w-7 h-7 text-zinc-600"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M224,44H32A20,20,0,0,0,12,64V192a20,20,0,0,0,20,20H224a20,20,0,0,0,20-20V64A20,20,0,0,0,224,44Zm-4,144H183l-12.6-16.8A8,8,0,0,0,164,168H92a8,8,0,0,0-6.4,3.2L73,188H36V68H220ZM82,152h92a34,34,0,0,0,0-68H82a34,34,0,0,0,0,68Zm0-44a10,10,0,1,1-10,10A10,10,0,0,1,82,108Zm102,10a10,10,0,1,1-10-10A10,10,0,0,1,184,118Zm-42.5,10h-27a34.08,34.08,0,0,0,0-20h27a34.08,34.08,0,0,0,0,20Z"/>
+        </svg>
       </div>
+      <div className="flex flex-col items-center gap-1 text-center">
+        <p className="text-[0.65625rem] font-semibold text-zinc-400 uppercase tracking-widest">No tracks yet</p>
+        <p className="text-[11px] text-zinc-600 max-w-40 leading-relaxed">Hit record to start building your collection.</p>
+      </div>
+    </div>
+  )
+}
+
+function RecordingRow({
+  entry,
+  onTrimEntry,
+  isNew
+}: {
+  entry: RecordingEntry
+  onTrimEntry: (entry: RecordingEntry) => void
+  isNew: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'relative flex items-center gap-3 rounded-lg px-3 py-2.5 bg-zinc-800/30 border border-zinc-700/30 hover:bg-zinc-800/55 hover:border-amber-500/30 transition-colors group overflow-hidden',
+        isNew && 'motion-safe:animate-[entry-in_550ms_cubic-bezier(0.16,1,0.3,1)] motion-reduce:animate-[entry-in-reduced_400ms_ease-out]'
+      )}
+    >
+      {/* Left accent bar */}
+      <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-transparent group-hover:bg-amber-500/50 transition-colors" />
+
+      <div className="w-10 h-10 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40 group-hover:ring-amber-500/40 transition-all">
+        <RecordingThumb entry={entry} />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-[0.875rem] font-semibold text-zinc-200 truncate leading-snug" title={entry.title || 'Unknown'}>
+          {entry.title || 'Unknown'}
+        </p>
+        <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5" title={entry.artist}>{entry.artist}</p>
+      </div>
+
+      {/* Two groups, not one flat row: what happened (metadata) vs. what you can
+          do about it (actions). 12px between the groups, 8px within each —
+          matching the project's group-vs-related-item spacing scale so the
+          gap itself signals the split, without adding a divider this small. */}
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          {entry.startedAt > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex items-center gap-1 text-[11px] text-zinc-600 whitespace-nowrap cursor-default">
+                  <Clock className="w-3 h-3 shrink-0" />
+                  {formatRecordedAt(entry.startedAt)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="select-text">
+                {new Date(entry.startedAt).toLocaleString()}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <StatusIcon status={entry.status} />
+          {entry.status === 'ok' && entry.durationSec > 0 && (
+            <span className="text-[11px] text-zinc-500 font-mono tabular-nums">
+              {formatDuration(entry.durationSec)}
+            </span>
+          )}
+          {entry.status === 'skipped' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-[0.65625rem] font-semibold uppercase tracking-widest text-zinc-500 truncate max-w-20 cursor-default">
+                  Skipped
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="select-text">{entry.error || 'Skipped'}</TooltipContent>
+            </Tooltip>
+          )}
+          {entry.status === 'error' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-[0.65625rem] font-semibold uppercase tracking-widest text-[var(--rec-500)] truncate max-w-20 cursor-default">
+                  Error
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="select-text">{entry.error}</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+
+        {entry.filePath && (
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-1 rounded opacity-30 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500 transition-[opacity,background-color,color] text-zinc-500 hover:text-amber-400 hover:bg-zinc-700/50"
+                  onClick={() => onTrimEntry(entry)}
+                  aria-label="Trim recording"
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Trim recording</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-1 rounded opacity-30 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500 transition-[opacity,background-color,color] text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50"
+                  onClick={() => window.electronAPI.openPath(entry.filePath)}
+                  aria-label="Open file location"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Open file location</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function NoMatchesState({ query, onClear }: { query: string; onClear: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-10">
+      <div className="w-14 h-14 rounded-xl bg-zinc-800/60 flex items-center justify-center ring-1 ring-zinc-700/30">
+        <Search className="w-6 h-6 text-zinc-600" />
+      </div>
+      <div className="flex flex-col items-center gap-1 text-center px-6">
+        <p className="text-[0.65625rem] font-semibold text-zinc-400 uppercase tracking-widest">No matches</p>
+        <p className="text-[11px] text-zinc-600 max-w-52 leading-relaxed truncate">
+          Nothing found for &ldquo;{query}&rdquo;
+        </p>
+      </div>
+      <button
+        onClick={onClear}
+        className="text-[0.65625rem] font-semibold text-amber-400 hover:text-amber-300 transition-colors uppercase tracking-widest"
+      >
+        Clear search
+      </button>
+    </div>
+  )
+}
+
+export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: RecordingLogProps) {
+  const [query, setQuery] = useState('')
+  const viewportRef = useRef<HTMLDivElement>(null)
+
+  // The one focal moment this list earns: a track that just landed (always
+  // appended, so always the array's last id) gets a brief glow-and-settle
+  // instead of appearing exactly like every other row. Tracked by id and
+  // cleared after the animation window so it never replays on re-renders
+  // (search, virtualizer re-measure, etc.) or on the initial data load.
+  const lastEntryIdRef = useRef<string | null>(entries.at(-1)?.id ?? null)
+  const [justAddedId, setJustAddedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const lastId = entries.at(-1)?.id ?? null
+    const isNewArrival = lastId !== null && lastId !== lastEntryIdRef.current
+    lastEntryIdRef.current = lastId
+    if (!isNewArrival) return
+
+    setJustAddedId(lastId)
+    const t = setTimeout(() => setJustAddedId(null), 600)
+    return () => clearTimeout(t)
+  }, [entries])
+
+  const visibleEntries = useMemo(() => {
+    const reversed = [...entries].reverse()
+    const q = query.trim().toLowerCase()
+    if (!q) return reversed
+    return reversed.filter(
+      (entry) => entry.title.toLowerCase().includes(q) || entry.artist.toLowerCase().includes(q)
     )
+  }, [entries, query])
+
+  // Rows are only mounted for the visible range (plus overscan) rather than
+  // all at once — a full archive can reach thousands of entries, and
+  // rendering every row unvirtualized measured ~4s to mount and ~500ms per
+  // search keystroke at 2000 rows.
+  const rowVirtualizer = useVirtualizer({
+    count: visibleEntries.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 66,
+    overscan: 8,
+    getItemKey: (index) => visibleEntries[index].id
+  })
+
+  if (entries.length === 0 && !finalizingTrack) {
+    return <EmptyState />
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div className="flex flex-col py-1 px-2">
-        {finalizingTrack && <FinalizingRow track={finalizingTrack} />}
-        {[...entries].reverse().map((entry) => (
-          <div
-            key={entry.id}
-            className="relative flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-zinc-800/45 transition-colors group animate-[entry-in_0.2s_ease_forwards] overflow-hidden"
-          >
-            {/* Left accent bar */}
-            <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-transparent group-hover:bg-amber-500/50 transition-colors" />
-
-            <div className="w-9 h-9 rounded-md overflow-hidden bg-zinc-800/80 shrink-0 flex items-center justify-center ring-1 ring-zinc-700/40">
-              <RecordingThumb entry={entry} />
-            </div>
-
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-medium text-zinc-200 truncate leading-snug">
-                {entry.title || 'Unknown'}
-              </p>
-              <p className="text-[11px] text-zinc-500 truncate leading-snug mt-0.5">{entry.artist}</p>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <StatusIcon status={entry.status} />
-              {entry.status === 'ok' && entry.durationSec > 0 && (
-                <span className="text-[11px] text-zinc-500 font-mono tabular-nums">
-                  {formatDuration(entry.durationSec)}
-                </span>
-              )}
-              {entry.status === 'skipped' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-[11px] text-zinc-600 tracking-wide truncate max-w-20 cursor-default">skipped</span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="select-text">{entry.error || 'Skipped'}</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.status === 'error' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-[11px] text-[var(--rec-500)] truncate max-w-20 cursor-default">error</span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="select-text">{entry.error}</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.filePath && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-amber-400"
-                      onClick={() => onTrimEntry(entry)}
-                      aria-label="Trim recording"
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">Trim recording</TooltipContent>
-                </Tooltip>
-              )}
-              {entry.filePath && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
-                      onClick={() => window.electronAPI.openPath(entry.filePath)}
-                      aria-label="Open file location"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">Open file location</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          </div>
-        ))}
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center gap-2 px-5 pb-2 shrink-0">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search recordings…"
+            aria-label="Search recordings"
+            className="pl-8 pr-8 text-xs"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <span className="text-[11px] text-zinc-500 tabular-nums shrink-0 whitespace-nowrap">
+          {query ? (
+            <>
+              {visibleEntries.length}
+              <span className="text-zinc-600"> / {entries.length}</span>
+            </>
+          ) : (
+            <>
+              {entries.length}{' '}
+              <span className="uppercase tracking-widest text-[0.65625rem] font-semibold text-zinc-600">
+                {entries.length === 1 ? 'recording' : 'recordings'}
+              </span>
+            </>
+          )}
+        </span>
       </div>
-    </ScrollArea>
+
+      <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
+        <div className="flex flex-col gap-1 px-2 pt-1 pb-3">
+          {finalizingTrack && <FinalizingRow track={finalizingTrack} />}
+          {visibleEntries.length === 0 ? (
+            <NoMatchesState query={query} onClear={() => setQuery('')} />
+          ) : (
+            <div style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const entry = visibleEntries[virtualRow.index]
+                return (
+                  <div
+                    key={entry.id}
+                    data-index={virtualRow.index}
+                    ref={rowVirtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                      paddingBottom: 4
+                    }}
+                  >
+                    <RecordingRow entry={entry} onTrimEntry={onTrimEntry} isNew={entry.id === justAddedId} />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   )
 }
