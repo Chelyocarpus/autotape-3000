@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App, SilenceDialog } from './App'
+import { ONBOARDING_KEY } from './components/OnboardingWizard'
 
 describe('App', () => {
   it('renders without throwing on initial mount', () => {
@@ -16,6 +17,35 @@ describe('App', () => {
   it('shows the idle record button when no recording is active', () => {
     render(<App />)
     expect(screen.getByRole('button', { name: /start recording/i })).toBeInTheDocument()
+  })
+})
+
+describe('App onboarding reopen', () => {
+  afterEach(() => {
+    localStorage.removeItem(ONBOARDING_KEY)
+  })
+
+  it('keeps the "onboarded" flag set after the wizard is reopened from Settings and cancelled', async () => {
+    // Simulate a user who already completed first-run setup.
+    localStorage.setItem(ONBOARDING_KEY, '1')
+    render(<App />)
+    expect(screen.queryByRole('dialog', { name: /first-time setup/i })).not.toBeInTheDocument()
+
+    // Radix's Tabs.Trigger activates on mousedown (event.button === 0), not
+    // on click — a plain fireEvent.click never fires its handler.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /settings/i }), { button: 0 })
+    fireEvent.click(await screen.findByRole('button', { name: /open setup wizard/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: /first-time setup/i })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^close$/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /first-time setup/i })).not.toBeInTheDocument()
+    })
+
+    // The reopened wizard's Cancel/Close must not clear the flag — otherwise
+    // the next app launch would wrongly treat setup as incomplete and force
+    // the user back through the whole first-run flow.
+    expect(localStorage.getItem(ONBOARDING_KEY)).toBe('1')
   })
 })
 

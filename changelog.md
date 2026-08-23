@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Previewing a trim on a long recording could make playback stutter** — The trim editor's waveform was being fully recalculated on every single frame while a preview played, not just when you zoomed or scrolled it. That work is now only redone when the view actually changes, so playback stays smooth.
 - **The sidebar's "Click to record" label could get cut off at the smallest window size** — At the app's minimum size, the album art and record button left no room for the status text below them. The sidebar now compacts itself at small window heights so nothing gets clipped.
 - **Screen reader users had no quick way to jump between the title bar, the Now Playing/record pane, and the Recordings/Settings pane** — The window now exposes proper header/main landmarks plus labeled sections for each pane, so navigating by region or heading works like it does in other apps.
+- **Starting your very first recording briefly showed a confusing "No matches, nothing found for ''" message** — while that first recording was still being saved and the list had nothing else in it yet. The list now just shows the in-progress recording, with no stray message underneath.
+- **Screen reader users couldn't jump straight to the Output, Source, Behavior, or Advanced sections in Settings** — Those section labels were plain text, not real headings. They're now proper headings, so heading-navigation works there too.
 
 ## [2.5.4] - 2026-08-18
 

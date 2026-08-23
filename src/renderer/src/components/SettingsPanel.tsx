@@ -26,14 +26,14 @@ function SectionHeader({
   muted?: boolean
 }) {
   return (
-    <div
+    <h3
       className={`flex items-center gap-1.5 text-[0.65625rem] font-semibold uppercase tracking-widest select-none ${
         muted ? 'text-zinc-600' : 'text-zinc-500'
       }`}
     >
       <Icon className="w-3.5 h-3.5" />
       {children}
-    </div>
+    </h3>
   )
 }
 

@@ -347,7 +347,11 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
         <div className="flex flex-col gap-1 px-2 pt-1 pb-3">
           {finalizingTrack && <FinalizingRow track={finalizingTrack} />}
           {visibleEntries.length === 0 ? (
-            <NoMatchesState query={query} onClear={() => setQuery('')} />
+            // With no completed entries yet but a search wasn't the reason —
+            // e.g. the very first recording is still finalizing — "no
+            // matches" is misleading. Only show it when a search is why the
+            // list is empty.
+            query && <NoMatchesState query={query} onClear={() => setQuery('')} />
           ) : (
             <div style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {

@@ -116,6 +116,20 @@ describe('RecordingLog', () => {
     expect(screen.getByText(/no matches/i)).toBeInTheDocument()
   })
 
+  it('does not show the no-matches state for the first recording finalizing with no completed entries and no search', () => {
+    renderWithTooltip(
+      <RecordingLog
+        entries={[]}
+        onTrimEntry={vi.fn()}
+        finalizingTrack={{ artist: 'Someone', title: 'First Track', album: '', albumArtFile: '', isPlaying: true }}
+      />
+    )
+
+    expect(screen.getByText('First Track')).toBeInTheDocument()
+    expect(screen.queryByText(/no matches/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/nothing found/i)).not.toBeInTheDocument()
+  })
+
   it('does not render a status icon for successful recordings', () => {
     const entries: RecordingEntry[] = [entry({ id: '1', title: 'Clean Take', status: 'ok', durationSec: 90 })]
     renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
