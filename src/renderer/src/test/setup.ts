@@ -9,6 +9,13 @@ class ResizeObserverStub {
 }
 ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
 
+// jsdom never lays elements out, so offsetHeight/clientHeight are always 0.
+// @tanstack/react-virtual (RecordingLog's row virtualization) reads
+// offsetHeight to size its visible window — left at 0, getVirtualItems()
+// always returns empty and no rows would ever render in tests.
+Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 600 })
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 400 })
+
 // jsdom doesn't implement 2D canvas contexts; SongTrimModal's drawWaveform()
 // already no-ops when getContext() returns null, so returning null here (vs.
 // jsdom's noisy "Not implemented" console error) matches what real headless

@@ -11,7 +11,7 @@ const TooltipTrigger = TooltipPrimitive.Trigger
 const TooltipContent = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 6, ...props }, ref) => (
+>(({ className, sideOffset = 6, children, ...props }, ref) => (
   <TooltipPrimitive.Portal>
     <TooltipPrimitive.Content
       ref={ref}
@@ -26,7 +26,14 @@ const TooltipContent = React.forwardRef<
         className
       )}
       {...props}
-    />
+    >
+      {children}
+      {/* Points the chip back at its trigger — helpful once several small
+          icon-only buttons sit close together (zoom controls, trim handles,
+          the recording log's row actions). Fill matches tooltip-bg so it
+          reads as part of the same chip. */}
+      <TooltipPrimitive.Arrow className="fill-[var(--tooltip-bg)]" width={10} height={5} />
+    </TooltipPrimitive.Content>
   </TooltipPrimitive.Portal>
 ))
 TooltipContent.displayName = TooltipPrimitive.Content.displayName

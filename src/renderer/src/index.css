@@ -106,9 +106,37 @@
   to   { transform: rotate(360deg); }
 }
 
+/* The one focal moment on the recording list: a captured track handing off
+   from its "encoding…" row (which carries an amber-tinted border) into its
+   settled place at the top of the list. The glow echoes that hand-off
+   instead of just fading in generically. Fires once per newly-added entry
+   only — never replayed for rows that scroll into view. */
 @keyframes entry-in {
-  from { opacity: 0; transform: translateY(5px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber-500) 55%, transparent),
+      0 0 14px color-mix(in srgb, var(--amber-500) 30%, transparent);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* prefers-reduced-motion path: keeps the glow (the meaningful "just
+   captured" feedback) but drops the spatial slide. */
+@keyframes entry-in-reduced {
+  from {
+    opacity: 0;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber-500) 55%, transparent),
+      0 0 14px color-mix(in srgb, var(--amber-500) 30%, transparent);
+  }
+  to {
+    opacity: 1;
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 @keyframes on-air-in {
@@ -163,6 +191,17 @@ html, body, #root {
 ::-webkit-scrollbar-thumb { background: var(--z-700); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--z-600); }
 
+/* Radix ScrollArea's Viewport wraps its children in an unclassed div with an
+   inline `display: table; min-width: 100%` style (used to measure content
+   size for the scrollbar thumb). Table layout sizes to content instead of
+   the available width, which defeats any `min-w-0`/`truncate` further down —
+   a long line inside a ScrollArea grows the whole viewport instead of
+   clipping. `!important` is required to beat the inline style. */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  min-width: 0 !important;
+}
+
 .app-shell {
   background: var(--app-bg);
 }
@@ -177,7 +216,10 @@ html, body, #root {
   background-color: var(--tooltip-bg);
   color: var(--tooltip-text);
   border: 1px solid var(--tooltip-border);
-  box-shadow: 0 4px 12px #0000001a;
+  /* Two-layer lift so the "distinct system layer floating above the app"
+     identity actually reads at a glance — the old single 10%-opacity shadow
+     was too faint to sell that on either theme's backdrop. */
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18), 0 2px 4px rgba(0, 0, 0, 0.12);
 }
 
 .playing-pill {
@@ -202,3 +244,47 @@ html, body, #root {
 .soundwave-bar-1 { animation-delay: 0s; }
 .soundwave-bar-2 { animation-delay: 0.18s; }
 .soundwave-bar-3 { animation-delay: 0.36s; }
+
+/* prefers-reduced-motion path: freezes the bouncing equalizer into a static
+   staggered-height snapshot, so "audio is playing" still reads at a glance
+   without continuous motion. */
+@media (prefers-reduced-motion: reduce) {
+  .soundwave-bar { animation: none; }
+  .soundwave-bar-1 { transform: scaleY(0.45); }
+  .soundwave-bar-2 { transform: scaleY(1); }
+  .soundwave-bar-3 { transform: scaleY(0.7); }
+}
+
+/* Sidebar compact mode — near the window's enforced 480px minimum height
+   (src/main/index.ts minHeight), the Now Playing art + vinyl button don't
+   both fit at their default size: the record button's own idle status text
+   ("Click to record" / tagline) was being silently clipped off by the
+   sidebar's overflow-hidden. Shrinking the art and button and tightening
+   gaps/padding here keeps everything visible with room to spare, verified
+   down to the actual 720x480 floor — 560px gives clear margin above where
+   clipping was observed starting (between 500-520px). */
+@media (max-height: 560px) {
+  .sidebar-content {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+    gap: 0.5rem;
+  }
+  .now-playing-stack {
+    gap: 0.5rem;
+  }
+  .now-playing-art {
+    width: 5rem;
+    height: 5rem;
+  }
+  .now-playing-art-icon {
+    width: 2rem;
+    height: 2rem;
+  }
+  .record-button-stack {
+    gap: 0.5rem;
+  }
+  .record-button-disc {
+    width: 4.75rem;
+    height: 4.75rem;
+  }
+}

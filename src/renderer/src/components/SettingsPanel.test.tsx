@@ -30,4 +30,12 @@ describe('SettingsPanel', () => {
     await screen.findByText('Output Folder')
     expect(screen.getByText('Bitrate')).toBeInTheDocument()
   })
+
+  it('renders each section label as a real heading, not a plain div, so screen readers can navigate by heading', async () => {
+    renderPanel()
+    await screen.findByText('Output Folder')
+
+    const headingNames = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+    expect(headingNames).toEqual(['Output', 'Source', 'Behavior', 'Advanced'])
+  })
 })

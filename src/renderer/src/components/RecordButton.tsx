@@ -35,10 +35,10 @@ function VinylDisc({ isRecording }: { isRecording: boolean }) {
   return (
     <svg
       className={cn(
-        'absolute inset-0 w-full h-full pointer-events-none',
+        'absolute inset-0 w-full h-full pointer-events-none motion-reduce:animate-none',
         isRecording
-          ? 'animate-[vinyl-spin_1.8s_linear_infinite]'
-          : 'animate-[vinyl-spin_8s_linear_infinite]'
+          ? 'motion-safe:animate-[vinyl-spin_1.8s_linear_infinite]'
+          : 'motion-safe:animate-[vinyl-spin_8s_linear_infinite]'
       )}
       viewBox="0 0 112 112"
       fill="none"
@@ -99,15 +99,15 @@ export function RecordButton({
   }, [isRecording])
 
   return (
-    <div className="flex flex-col items-center gap-5 pt-1">
+    <div className="record-button-stack flex flex-col items-center gap-5 pt-1">
       {/* Vinyl record button */}
       <div className="flex items-center justify-center">
         <button
           className={cn(
-            'group relative w-28 h-28 rounded-full cursor-pointer',
+            'record-button-disc group relative w-28 h-28 rounded-full cursor-pointer',
             'transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900',
             isRecording
-              ? 'focus-visible:ring-[var(--rec-500)] animate-[record-ring_1.8s_ease_infinite]'
+              ? 'focus-visible:ring-[var(--rec-500)] motion-safe:animate-[record-ring_1.8s_ease_infinite] motion-reduce:shadow-[0_0_0_4px_color-mix(in_srgb,var(--rec-500)_35%,transparent)]'
               : 'focus-visible:ring-[var(--color-amber-500)] hover:scale-[1.08] hover:shadow-[0_0_40px_color-mix(in_srgb,var(--color-amber-500)_50%,transparent)] active:scale-[1.02]'
           )}
           onClick={isRecording ? onStop : onStart}

@@ -43,3 +43,4 @@ dev-app-update.yml
 /.impeccable
 DESIGN.md
 PRODUCT.md
+/.playwright-mcp

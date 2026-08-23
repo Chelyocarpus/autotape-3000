@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SongTrimModal } from './SongTrimModal'
 import type { RecordingEntry } from '../types'
@@ -79,6 +79,104 @@ describe('SongTrimModal', () => {
     expect(await screen.findByText(/file not found/i)).toBeInTheDocument()
   })
 
+  it('moves initial focus into the dialog instead of leaving it on <body>', () => {
+    render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+    // The Close button is the first focusable element in the dialog
+    // regardless of load state, since the header renders before content
+    // that's gated on isLoading/loadError.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^close$/i }))
+  })
+
+  it('calls onClose on Escape', () => {
+    const onClose = vi.fn()
+    render(<SongTrimModal entry={entry} onClose={onClose} onSaved={vi.fn()} />)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('traps Tab focus between the Close button and the Save button once loaded', async () => {
+    render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+    const closeButton = screen.getByRole('button', { name: /^close$/i })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save trimmed file/i })).toBeEnabled()
+    })
+    const saveButton = screen.getByRole('button', { name: /save trimmed file/i })
+
+    // Save is the last focusable element once loaded (it's disabled, and so
+    // excluded from the trap, while loading/erroring).
+    saveButton.focus()
+    fireEvent.keyDown(saveButton, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(saveButton)
+  })
+
+  it('does not recompute waveform peaks on every playhead tick, but does on zoom', async () => {
+    // Counts reads of individual sample indices — the expensive part of peak
+    // computation — so we can tell whether playback (which only moves the
+    // playhead) triggers it, versus zooming (which changes the view window
+    // and legitimately needs a recompute).
+    const rawChannelData = new Float32Array(2000)
+    let indexReads = 0
+    const channelData = new Proxy(rawChannelData, {
+      // No `receiver` argument: TypedArray's built-in accessors (e.g. the
+      // `length` getter) reject being invoked with a `this` that isn't a
+      // real TypedArray, which the Proxy itself isn't.
+      get(target, prop) {
+        if (typeof prop === 'string' && /^\d+$/.test(prop)) indexReads++
+        return Reflect.get(target, prop)
+      }
+    })
+
+    let ctxInstance: { currentTime: number } | undefined
+    class TickingAudioContext {
+      currentTime = 0
+      destination = {}
+      decodeAudioData(): Promise<{ duration: number; getChannelData: () => Float32Array }> {
+        return Promise.resolve({ duration: 120, getChannelData: () => channelData })
+      }
+      createBufferSource(): FakeAudioBufferSourceNode {
+        return new FakeAudioBufferSourceNode()
+      }
+      close(): Promise<void> {
+        return Promise.resolve()
+      }
+      constructor() {
+        ctxInstance = this
+      }
+    }
+    vi.stubGlobal('AudioContext', TickingAudioContext)
+
+    const rafQueue: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
+    const runFrame = (): void => {
+      const cb = rafQueue.shift()
+      cb?.(performance.now())
+    }
+
+    render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /preview trim/i })).toBeEnabled()
+    })
+
+    const readsAfterLoad = indexReads
+    expect(readsAfterLoad).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /preview trim/i }))
+    for (let i = 0; i < 5; i++) {
+      if (ctxInstance) ctxInstance.currentTime += 0.05
+      act(() => runFrame())
+    }
+    expect(indexReads).toBe(readsAfterLoad)
+
+    fireEvent.click(screen.getByRole('button', { name: /zoom in/i }))
+    expect(indexReads).toBeGreaterThan(readsAfterLoad)
+  })
+
   it('shows a persistent warning banner when the MP3 lossless source is unavailable', async () => {
     window.electronAPI.trimHasLosslessSource = vi.fn(() => Promise.resolve(false))
     render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
@@ -93,5 +191,17 @@ describe('SongTrimModal', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /save trimmed file/i })).toBeEnabled())
     expect(checkMock).not.toHaveBeenCalled()
     expect(screen.queryByText(/original recording no longer available/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a visible error and re-enables Save when saving fails, instead of failing silently', async () => {
+    window.electronAPI.trimApply = vi.fn(() => Promise.reject(new Error('disk full')))
+    render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    const saveButton = await screen.findByRole('button', { name: /save trimmed file/i })
+    await waitFor(() => expect(saveButton).toBeEnabled())
+    fireEvent.click(saveButton)
+
+    expect(await screen.findByText('disk full')).toBeInTheDocument()
+    await waitFor(() => expect(saveButton).toBeEnabled())
   })
 })

@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.5] - 2026-08-23
+
+### Changed
+
+- **"Skipped" and "Error" labels in the recording list are easier to spot at a glance** — They now use the same bold, uppercase style as other status labels in the app instead of small plain text that blended in with timestamps and other fine print.
+- **Tooltips now have a small pointer connecting them to what they're describing, and a bit more visual lift** — Helpful once several small icon-only buttons sit close together, like the zoom controls in the trim editor or the trim/open-folder buttons in the recording list.
+- **The recording time in the recording list could be mistaken for the duration next to it** — Both were shown as plain "M:SS"-style numbers with nothing to tell them apart, especially on 24-hour clocks. The recording time now has a small clock icon in front of it.
+- **The recording list's timestamp/status and its Trim/Open buttons ran together as one cluster** — There was no visual break between "what happened to this recording" and "what you can do about it." A bit more space now separates the two groups.
+- **The recording time's tooltip used a plain unstyled browser tooltip instead of the app's own tooltip style**, and **the Trim/Open buttons showed no hover highlight, just a faint color shift** — both easy to miss. The time now shows the app's styled tooltip with the full date, and both buttons get a visible background highlight on hover.
+
+### Fixed
+
+- **Keyboard users could tab out of first-time setup into the app behind it** — Since setup can't be skipped on a first run, this meant the very thing it was supposed to prevent. Keyboard focus now stays inside the setup window until it's completed or closed. The same fix now applies to the trim editor and the "no audio detected" warning.
+- **The dark/light mode toggle had no label for screen readers** — It announced only as "button" with no indication of what it did. It now announces "Switch to light mode" or "Switch to dark mode".
+- **The spinning record button, recording pulse ring, and playing equalizer bars ignored your system's reduced-motion setting** — If you have "reduce motion" turned on in Windows, these now hold still (or show a static snapshot) instead of animating continuously, while still showing the same information at a glance.
+- **Previewing a trim on a long recording could make playback stutter** — The trim editor's waveform was being fully recalculated on every single frame while a preview played, not just when you zoomed or scrolled it. That work is now only redone when the view actually changes, so playback stays smooth.
+- **The sidebar's "Click to record" label could get cut off at the smallest window size** — At the app's minimum size, the album art and record button left no room for the status text below them. The sidebar now compacts itself at small window heights so nothing gets clipped.
+- **Screen reader users had no quick way to jump between the title bar, the Now Playing/record pane, and the Recordings/Settings pane** — The window now exposes proper header/main landmarks plus labeled sections for each pane, so navigating by region or heading works like it does in other apps.
+- **Starting your very first recording briefly showed a confusing "No matches, nothing found for ''" message** — while that first recording was still being saved and the list had nothing else in it yet. The list now just shows the in-progress recording, with no stray message underneath.
+- **Screen reader users couldn't jump straight to the Output, Source, Behavior, or Advanced sections in Settings** — Those section labels were plain text, not real headings. They're now proper headings, so heading-navigation works there too.
+
+## [2.5.4] - 2026-08-18
+
+### Changed
+
+- **Settings is now organized into groups** — Output, Source, Behavior, and an Advanced section for the rarely-touched ffmpeg path and setup wizard, instead of nine settings all sitting in one flat list.
+- **Recording rows now show when they were captured**, not just how long they are.
+- **Settings' audio device list now highlights recommended virtual-cable devices**, matching the same grouping first-time setup already used.
+
+### Fixed
+
+- **The trim editor's start/end handles couldn't be used without a mouse** — Keyboard users could zoom into a recording but had no way to actually set a trim point. The handles can now be tabbed to and nudged with the arrow keys (hold Shift for bigger steps).
+- **Settings labels didn't match the rest of the app** — Field labels in Settings ("Output Folder", "Format", "Bitrate", etc.) were larger and styled differently from every other section label in the app. They now match.
+- **A few small text labels were smaller than the rest of the app's fine print** — Bumped up to match.
+- **Reopening first-time setup from Settings had no way out** — If you opened "Setup" to re-check your device or folder, you had to click through every step to close it. It can now be closed at any time with the X or Escape key (the very first setup still can't be skipped).
+- **First-time setup's last button said "Start recording" but didn't start one** — It only closed the setup window. Renamed to "Finish setup" so it says what it actually does.
+- **Setup didn't warn early enough about needing a virtual audio cable** — If no virtual cable was found on your PC, the device list showed no guidance until after you'd already picked something. It now explains upfront, before you choose, with a link to get one.
+- **The Now Playing artwork glow used the wrong color in light mode** — It was hardcoded to the dark-theme accent color, so it looked off after switching to light mode. It now follows the current theme correctly.
+- **The ffmpeg "auto-detect" button in Settings could silently clear a working custom path** — Clicking it always reset your custom ffmpeg location, even if detection came up empty. It now only resets it when detection actually finds something.
+
+## [2.5.3] - 2026-08-17
+
+### Added
+
+- **Search box in the recording list** — Type a title or artist to quickly filter down to it once you've recorded a lot of tracks.
+
+### Changed
+
+- **Recording list rows got a visual refresh** — Bigger album art, a distinct card look for each row, and better-aligned status icons.
+- **Successful recordings no longer show a checkmark icon** — Only skipped and failed recordings get a status icon now; a clean recording is shown by its absence, keeping the list quieter.
+- **The recording list stays fast no matter how large your archive gets** — Previously, a list of thousands of recordings could take several seconds to open and make searching feel sluggish. The list now only renders what's on screen, so it opens and searches instantly regardless of how many recordings you've saved.
+- **A freshly saved recording now settles into the list with a brief glow** — When a track finishes saving, it now visibly lands at the top of the list with a soft highlight, instead of just silently appearing.
+- **Small uppercase labels in the recording list now match in size** — "RECORDINGS", "NO TRACKS YET", "NO MATCHES", and "CLEAR SEARCH" previously rendered at three slightly different sizes; they're now consistent.
+
+### Fixed
+
+- **A long track title or artist name broke the whole recording list** — If one recording had a very long title, every row in the list would stretch far past the visible area, pushing the duration, status, and Trim/Open buttons off-screen. Long titles now truncate correctly instead.
+- **Trim and Open-folder buttons were invisible when reached by keyboard** — Tabbing to these buttons showed no visual indication they were focused. They now show a focus ring.
+- **Searching while a recording was still saving could hide the "no matches" message** — If nothing matched your search while a track was actively being saved, you'd see no explanation and no way to clear the search. Both now show correctly at the same time.
+- **Recording rows had no visible margin from the panel edge** — Rows could sit flush against the panel's border on the left, right, and bottom. They now keep a consistent gap on every side, matching the search bar above them.
+- **Recordings over an hour showed a wrong-looking duration** — A recording over 59:59 (e.g. a long DJ mix) showed as "125:30" instead of "2:05:30".
+- **Long titles or artist names had no way to see the full text** — Hovering a truncated title or artist now shows the full text in a tooltip.
+- **Trim and Open-folder buttons were easy to miss** — They only appeared on hover, so their existence wasn't obvious. They now stay faintly visible at all times and brighten on hover or focus.
+- **A failed trim save gave no indication anything went wrong** — If saving a trimmed recording failed, the dialog just quietly returned to normal with no message. It now shows what went wrong and lets you try again.
+- **The first-run setup window now appears with a bit of polish** — It used to pop in instantly; it now fades and settles in like every other dialog in the app.
+- **The "no audio detected" warning used the wrong color and tone** — It looked the same as a routine notice instead of a warning, and read like generic software copy. It's now shown in the app's warning color with copy that matches the app's voice.
+- **The trim editor's checkboxes didn't match the rest of the app** — "Save as preset" and "Apply as global default" used plain browser checkboxes instead of the app's usual toggle switches, and the Save button used the wrong accent color. Both now match the rest of the app.
+
 ## [2.5.2] - 2026-08-16
 
 ### Added
