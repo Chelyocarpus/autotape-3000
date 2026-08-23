@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Starting your very first recording briefly showed a confusing "No matches, nothing found for ''" message** — while that first recording was still being saved and the list had nothing else in it yet. The list now just shows the in-progress recording, with no stray message underneath.
 - **Screen reader users couldn't jump straight to the Output, Source, Behavior, or Advanced sections in Settings** — Those section labels were plain text, not real headings. They're now proper headings, so heading-navigation works there too.
 
+### Security
+
+- **Updated several behind-the-scenes packages used for building and testing the app** to their latest safe versions, closing a batch of known security advisories flagged by GitHub. None of these affected the app as it runs on your computer.
+
 ## [2.5.4] - 2026-08-18
 
 ### Changed
