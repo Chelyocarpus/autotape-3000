@@ -385,6 +385,11 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
         repositionTimerRef.current = null
       }
       setIsRepositioning(false)
+      // Cancelling the timer also cancels the `setJustMatchedIds(new Set())`
+      // it would have run — clear it here too, or a matched row that scrolls
+      // out of the virtualizer's mounted range and back in later would still
+      // have filterMatchDelayMs set and replay the fade on remount.
+      setJustMatchedIds(new Set())
     }
     viewport.addEventListener('wheel', cancelReposition, { passive: true })
     viewport.addEventListener('touchmove', cancelReposition, { passive: true })
