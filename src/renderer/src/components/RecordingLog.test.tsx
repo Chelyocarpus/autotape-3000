@@ -161,6 +161,51 @@ describe('RecordingLog', () => {
     expect(oldRow?.className).not.toMatch(/entry-in/)
   })
 
+  it('fades in a row that only just started matching a broadened search, not one that was already visible', () => {
+    const entries: RecordingEntry[] = [
+      entry({ id: '1', title: 'Midnight City', artist: 'M83' }),
+      entry({ id: '2', title: 'Instant Crush', artist: 'Daft Punk' })
+    ]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    const search = screen.getByPlaceholderText(/search recordings/i)
+    fireEvent.change(search, { target: { value: 'daft' } })
+    expect(screen.queryByText('Midnight City')).not.toBeInTheDocument()
+
+    // Broadening back to everything reveals "Midnight City" for the first
+    // time since it was excluded — "Instant Crush" was visible throughout.
+    fireEvent.change(search, { target: { value: '' } })
+
+    const revealedRow = screen.getByText('Midnight City').closest('div[class*="rounded-lg"]')
+    const alreadyVisibleRow = screen.getByText('Instant Crush').closest('div[class*="rounded-lg"]')
+    expect(revealedRow?.className).toMatch(/filter-match-in/)
+    expect(alreadyVisibleRow?.className).not.toMatch(/filter-match-in/)
+  })
+
+  it('clears the filter-match state on a real scroll during the reposition window, so a row does not replay the fade later', () => {
+    const entries: RecordingEntry[] = [
+      entry({ id: '1', title: 'Midnight City', artist: 'M83' }),
+      entry({ id: '2', title: 'Instant Crush', artist: 'Daft Punk' })
+    ]
+    const { container } = renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    const search = screen.getByPlaceholderText(/search recordings/i)
+    fireEvent.change(search, { target: { value: 'daft' } })
+    fireEvent.change(search, { target: { value: '' } })
+
+    // "Midnight City" is mid-fade-in at this point (see the test above) —
+    // a real scroll gesture should cancel that state immediately rather
+    // than just cancelling the visual transition, or the row would still
+    // carry filterMatchDelayMs and could replay the fade if virtualization
+    // later unmounts and remounts it.
+    const viewport = container.querySelector('[data-radix-scroll-area-viewport]')
+    expect(viewport).not.toBeNull()
+    fireEvent.wheel(viewport as Element)
+
+    const revealedRow = screen.getByText('Midnight City').closest('div[class*="rounded-lg"]')
+    expect(revealedRow?.className).not.toMatch(/filter-match-in/)
+  })
+
   it('virtualizes a large list instead of mounting every row', () => {
     const entries: RecordingEntry[] = Array.from({ length: 500 }, (_, i) =>
       entry({ id: String(i), title: `Track ${i}` })

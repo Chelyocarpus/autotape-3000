@@ -144,6 +144,23 @@
   to   { opacity: 1; transform: scale(1); }
 }
 
+/* A row that only just started matching the search as the user types — part
+   of the same reflow choreography as RecordingLog's reposition transition
+   (see `isRepositioning` there), so it stays a quiet settle-into-place, not
+   a second competing entrance animation. Uses `backwards` fill so the row
+   stays invisible through its staggered delay instead of flashing visible
+   first. Deliberately has no glow — that's entry-in's exclusive "just
+   captured" signal, not a general-purpose appearance effect. */
+@keyframes filter-match-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes filter-match-in-reduced {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 .song-trim-modal-card {
   box-shadow: 0 32px 64px rgba(0, 0, 0, 0.6);
 }
