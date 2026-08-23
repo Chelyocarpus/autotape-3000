@@ -177,6 +177,85 @@ describe('SongTrimModal', () => {
     expect(indexReads).toBeGreaterThan(readsAfterLoad)
   })
 
+  it('composites the moving playhead with a single blit instead of redrawing the static waveform layer', async () => {
+    // Swaps jsdom's null-returning getContext (see test/setup.ts) for a
+    // stand-in that records calls, so this can distinguish drawStaticLayer's
+    // per-pixel fillRect loop from compositeFrame's one-call-per-tick blit.
+    const originalGetContext = HTMLCanvasElement.prototype.getContext
+    const fillRectSpy = vi.fn()
+    const drawImageSpy = vi.fn()
+    const fakeCtx = {
+      fillRect: fillRectSpy,
+      clearRect: vi.fn(),
+      drawImage: drawImageSpy,
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      fill: vi.fn(),
+      setLineDash: vi.fn(),
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 0
+    }
+    HTMLCanvasElement.prototype.getContext =
+      (() => fakeCtx) as unknown as typeof HTMLCanvasElement.prototype.getContext
+
+    try {
+      let ctxInstance: { currentTime: number } | undefined
+      class TickingAudioContext {
+        currentTime = 0
+        destination = {}
+        decodeAudioData(): Promise<{ duration: number; getChannelData: () => Float32Array }> {
+          return Promise.resolve({ duration: 120, getChannelData: () => new Float32Array(2000) })
+        }
+        createBufferSource(): FakeAudioBufferSourceNode {
+          return new FakeAudioBufferSourceNode()
+        }
+        close(): Promise<void> {
+          return Promise.resolve()
+        }
+        constructor() {
+          ctxInstance = this
+        }
+      }
+      vi.stubGlobal('AudioContext', TickingAudioContext)
+
+      const rafQueue: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+        rafQueue.push(cb)
+        return rafQueue.length
+      })
+      const runFrame = (): void => {
+        const cb = rafQueue.shift()
+        cb?.(performance.now())
+      }
+
+      render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preview trim/i })).toBeEnabled()
+      })
+
+      const fillRectAfterLoad = fillRectSpy.mock.calls.length
+      expect(fillRectAfterLoad).toBeGreaterThan(0) // the static layer drew its peak bars
+
+      fireEvent.click(screen.getByRole('button', { name: /preview trim/i }))
+      const drawImageBeforeTicks = drawImageSpy.mock.calls.length
+      for (let i = 0; i < 5; i++) {
+        if (ctxInstance) ctxInstance.currentTime += 0.05
+        act(() => runFrame())
+      }
+
+      // Five playback ticks: the blit fires each time, but not one further
+      // fillRect — the expensive peak-bar redraw never reruns for a moving
+      // playhead.
+      expect(fillRectSpy.mock.calls.length).toBe(fillRectAfterLoad)
+      expect(drawImageSpy.mock.calls.length).toBeGreaterThan(drawImageBeforeTicks)
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext
+    }
+  })
+
   it('shows a persistent warning banner when the MP3 lossless source is unavailable', async () => {
     window.electronAPI.trimHasLosslessSource = vi.fn(() => Promise.resolve(false))
     render(<SongTrimModal entry={entry} onClose={vi.fn()} onSaved={vi.fn()} />)

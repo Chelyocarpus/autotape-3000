@@ -127,18 +127,32 @@ function EmptyState() {
 function RecordingRow({
   entry,
   onTrimEntry,
-  isNew
+  isNew,
+  filterMatchDelayMs
 }: {
   entry: RecordingEntry
   onTrimEntry: (entry: RecordingEntry) => void
   isNew: boolean
+  /** Set only for a row that just started matching a search as the user typed —
+   *  undefined means it was already visible and shouldn't re-animate. Takes a
+   *  back seat to `isNew`: a row can't be both a fresh capture and a filter
+   *  match in the same render, and the capture glow is the rarer, more
+   *  meaningful signal. */
+  filterMatchDelayMs?: number
 }) {
   return (
     <div
       className={cn(
         'relative flex items-center gap-3 rounded-lg px-3 py-2.5 bg-zinc-800/30 border border-zinc-700/30 hover:bg-zinc-800/55 hover:border-amber-500/30 transition-colors group overflow-hidden',
-        isNew && 'motion-safe:animate-[entry-in_550ms_cubic-bezier(0.16,1,0.3,1)] motion-reduce:animate-[entry-in-reduced_400ms_ease-out]'
+        isNew && 'motion-safe:animate-[entry-in_550ms_cubic-bezier(0.16,1,0.3,1)] motion-reduce:animate-[entry-in-reduced_400ms_ease-out]',
+        !isNew && filterMatchDelayMs !== undefined &&
+          'motion-safe:animate-[filter-match-in_260ms_cubic-bezier(0.16,1,0.3,1)_backwards] motion-reduce:animate-[filter-match-in-reduced_200ms_ease-out_backwards]'
       )}
+      style={
+        !isNew && filterMatchDelayMs !== undefined
+          ? { animationDelay: `${filterMatchDelayMs}ms` }
+          : undefined
+      }
     >
       {/* Left accent bar */}
       <div className="absolute left-0 inset-y-1.5 w-0.5 rounded-full bg-transparent group-hover:bg-amber-500/50 transition-colors" />
@@ -279,6 +293,25 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
     return () => clearTimeout(t)
   }, [entries])
 
+  // "Physical List" reflow: when a search changes which rows are visible,
+  // the virtualizer's remaining rows slide to their new position instead of
+  // snapping there, and rows that just started matching fade up staggered
+  // by their position in the new list. Scoped to genuine query changes only
+  // (REPOSITION_WINDOW_MS below) — a new recording arriving with no active
+  // search shouldn't trigger this, that's `justAddedId`'s job.
+  const REPOSITION_WINDOW_MS = 320
+  const MAX_STAGGER_MS = 150
+  const STAGGER_STEP_MS = 15
+  const prevQueryRef = useRef(query)
+  const prevVisibleIdsRef = useRef<Set<string>>(new Set())
+  const [isRepositioning, setIsRepositioning] = useState(false)
+  const [justMatchedIds, setJustMatchedIds] = useState<ReadonlySet<string>>(new Set())
+  const repositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prefersReducedMotion = useMemo(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+    []
+  )
+
   const visibleEntries = useMemo(() => {
     const reversed = [...entries].reverse()
     const q = query.trim().toLowerCase()
@@ -287,6 +320,79 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
       (entry) => entry.title.toLowerCase().includes(q) || entry.artist.toLowerCase().includes(q)
     )
   }, [entries, query])
+
+  // Robustness / pitfalls guarded against:
+  // - Only animates on an actual query change (`queryChanged`), not on every
+  //   `visibleEntries` recompute — a new recording arriving mid-search would
+  //   otherwise retrigger the reflow for rows that never moved.
+  // - `justMatched` is capped implicitly by the virtualizer's own mounted
+  //   range (overscan 8 + viewport rows), but the stagger delay itself is
+  //   still explicitly clamped (MAX_STAGGER_MS) so a very tall window can't
+  //   push a row's fade-in delay out past where it'd read as broken.
+  // - The reposition timer is cleared on every rerun and on unmount so a
+  //   fast burst of keystrokes can't leave a stale timeout that flips
+  //   `isRepositioning` off after a *later* keystroke's window is still live.
+  useEffect(() => {
+    const queryChanged = query !== prevQueryRef.current
+    prevQueryRef.current = query
+    const newIds = new Set(visibleEntries.map((e) => e.id))
+
+    if (queryChanged && !prefersReducedMotion) {
+      const oldIds = prevVisibleIdsRef.current
+      const justMatched = new Set<string>()
+      for (const id of newIds) if (!oldIds.has(id)) justMatched.add(id)
+      setJustMatchedIds(justMatched)
+      setIsRepositioning(true)
+
+      if (repositionTimerRef.current) clearTimeout(repositionTimerRef.current)
+      repositionTimerRef.current = setTimeout(() => {
+        setIsRepositioning(false)
+        setJustMatchedIds(new Set())
+        repositionTimerRef.current = null
+      }, REPOSITION_WINDOW_MS)
+
+      // Ease the viewport back into bounds instead of letting it hard-clamp:
+      // a search that shrinks the list can otherwise leave the scroll
+      // position past the new (shorter) content, showing blank space.
+      const viewport = viewportRef.current
+      if (viewport) {
+        const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+        if (viewport.scrollTop > maxScrollTop) {
+          viewport.scrollTo({ top: maxScrollTop, behavior: 'smooth' })
+        }
+      }
+    }
+
+    prevVisibleIdsRef.current = newIds
+  }, [query, visibleEntries, prefersReducedMotion])
+
+  useEffect(() => () => {
+    if (repositionTimerRef.current) clearTimeout(repositionTimerRef.current)
+  }, [])
+
+  // Safety valve: a real user scroll gesture always wins over the reflow
+  // transition, so it never fights live scrolling with an animated lag.
+  // Deliberately listens for wheel/touchmove (user intent) rather than the
+  // viewport's own `scroll` event — the smooth scrollTo above (and the
+  // browser's own scrollTop clamp when content shrinks) also fires `scroll`,
+  // which would otherwise cancel the reflow it's part of.
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const cancelReposition = () => {
+      if (repositionTimerRef.current) {
+        clearTimeout(repositionTimerRef.current)
+        repositionTimerRef.current = null
+      }
+      setIsRepositioning(false)
+    }
+    viewport.addEventListener('wheel', cancelReposition, { passive: true })
+    viewport.addEventListener('touchmove', cancelReposition, { passive: true })
+    return () => {
+      viewport.removeEventListener('wheel', cancelReposition)
+      viewport.removeEventListener('touchmove', cancelReposition)
+    }
+  }, [])
 
   // Rows are only mounted for the visible range (plus overscan) rather than
   // all at once — a full archive can reach thousands of entries, and
@@ -356,6 +462,7 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
             <div style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const entry = visibleEntries[virtualRow.index]
+                const isFilterMatch = justMatchedIds.has(entry.id)
                 return (
                   <div
                     key={entry.id}
@@ -367,10 +474,20 @@ export function RecordingLog({ entries, onTrimEntry, finalizingTrack }: Recordin
                       left: 0,
                       width: '100%',
                       transform: `translateY(${virtualRow.start}px)`,
+                      transition: isRepositioning ? 'transform 300ms cubic-bezier(0.16,1,0.3,1)' : undefined,
                       paddingBottom: 4
                     }}
                   >
-                    <RecordingRow entry={entry} onTrimEntry={onTrimEntry} isNew={entry.id === justAddedId} />
+                    <RecordingRow
+                      entry={entry}
+                      onTrimEntry={onTrimEntry}
+                      isNew={entry.id === justAddedId}
+                      filterMatchDelayMs={
+                        isFilterMatch
+                          ? Math.min(virtualRow.index * STAGGER_STEP_MS, MAX_STAGGER_MS)
+                          : undefined
+                      }
+                    />
                   </div>
                 )
               })}

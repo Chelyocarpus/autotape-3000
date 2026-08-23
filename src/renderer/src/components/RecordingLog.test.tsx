@@ -161,6 +161,27 @@ describe('RecordingLog', () => {
     expect(oldRow?.className).not.toMatch(/entry-in/)
   })
 
+  it('fades in a row that only just started matching a broadened search, not one that was already visible', () => {
+    const entries: RecordingEntry[] = [
+      entry({ id: '1', title: 'Midnight City', artist: 'M83' }),
+      entry({ id: '2', title: 'Instant Crush', artist: 'Daft Punk' })
+    ]
+    renderWithTooltip(<RecordingLog entries={entries} onTrimEntry={vi.fn()} />)
+
+    const search = screen.getByPlaceholderText(/search recordings/i)
+    fireEvent.change(search, { target: { value: 'daft' } })
+    expect(screen.queryByText('Midnight City')).not.toBeInTheDocument()
+
+    // Broadening back to everything reveals "Midnight City" for the first
+    // time since it was excluded — "Instant Crush" was visible throughout.
+    fireEvent.change(search, { target: { value: '' } })
+
+    const revealedRow = screen.getByText('Midnight City').closest('div[class*="rounded-lg"]')
+    const alreadyVisibleRow = screen.getByText('Instant Crush').closest('div[class*="rounded-lg"]')
+    expect(revealedRow?.className).toMatch(/filter-match-in/)
+    expect(alreadyVisibleRow?.className).not.toMatch(/filter-match-in/)
+  })
+
   it('virtualizes a large list instead of mounting every row', () => {
     const entries: RecordingEntry[] = Array.from({ length: 500 }, (_, i) =>
       entry({ id: String(i), title: `Track ${i}` })

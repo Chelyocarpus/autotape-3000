@@ -72,12 +72,18 @@ function computePeaks(channelData: Float32Array, viewStart: number, viewEnd: num
   return peaks
 }
 
-function drawWaveform(
+// Everything except the playhead — i.e. everything that does NOT change on
+// a playback tick. Costs one fillRect per horizontal pixel for the peak
+// bars alone (the canvas's *device*-pixel width, so up to several thousand
+// draw calls on a wide, high-DPI display) plus the tint/overlay/ruler
+// passes on top — too expensive to repeat 60 times a second. Rendered to an
+// offscreen canvas and cached there by the caller; see `compositeFrame`
+// for the actual per-frame path.
+function drawStaticLayer(
   canvas: HTMLCanvasElement,
   peaks: Float32Array,
   startFrac: number,
   endFrac: number,
-  playFrac: number,
   isDark: boolean,
   viewStart: number,
   viewEnd: number
@@ -86,12 +92,10 @@ function drawWaveform(
   if (!ctx || viewEnd <= viewStart) return
 
   const { width, height } = canvas
-  const mid = height / 2
   const viewRange = viewEnd - viewStart
 
   const style = getComputedStyle(document.documentElement)
   const clr800 = style.getPropertyValue('--z-800').trim() || '#2a1b16'
-  const clr500 = style.getPropertyValue('--z-500').trim() || '#b89080'
   const clrAmber = style.getPropertyValue('--color-amber-400').trim() || '#e2b59a'
 
   ctx.clearRect(0, 0, width, height)
@@ -109,6 +113,7 @@ function drawWaveform(
 
   // Waveform bars — reuses peaks computed (and cached) by the caller; see
   // computePeaks for the expensive downsampling step this skips.
+  const mid = height / 2
   for (let x = 0; x < width; x++) {
     const peak = peaks[x] ?? 0
     const barH = Math.max(2, peak * (height - 4))
@@ -144,21 +149,41 @@ function drawWaveform(
     ctx.beginPath(); ctx.moveTo(width - 8, mid); ctx.lineTo(width - 16, mid - 5); ctx.lineTo(width - 16, mid + 5); ctx.fill()
   }
 
-  // Playhead
-  if (playFrac >= viewStart && playFrac <= viewEnd && playFrac > 0) {
-    const px = Math.round(fracToX(playFrac))
-    ctx.strokeStyle = clr500
-    ctx.lineWidth = 1
-    ctx.setLineDash([3, 3])
-    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, height); ctx.stroke()
-    ctx.setLineDash([])
-  }
-
   // Time ruler ticks
   ctx.fillStyle = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'
   const tickCount = Math.floor(width / 80)
   for (let t = 1; t < tickCount; t++) {
     ctx.fillRect(Math.round((t / tickCount) * width), height - 6, 1, 6)
+  }
+}
+
+// The per-frame path: blits the cached static layer (one drawImage, GPU
+// composited) then strokes just the moving playhead line on top — the only
+// thing that actually changes 60 times a second during playback.
+function compositeFrame(
+  visibleCanvas: HTMLCanvasElement,
+  staticCanvas: HTMLCanvasElement,
+  playFrac: number,
+  viewStart: number,
+  viewEnd: number
+): void {
+  const ctx = visibleCanvas.getContext('2d')
+  if (!ctx || viewEnd <= viewStart) return
+  const { width, height } = visibleCanvas
+  const viewRange = viewEnd - viewStart
+
+  ctx.clearRect(0, 0, width, height)
+  ctx.drawImage(staticCanvas, 0, 0)
+
+  if (playFrac >= viewStart && playFrac <= viewEnd && playFrac > 0) {
+    const style = getComputedStyle(document.documentElement)
+    const clr500 = style.getPropertyValue('--z-500').trim() || '#b89080'
+    const px = Math.round(((playFrac - viewStart) / viewRange) * width)
+    ctx.strokeStyle = clr500
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 3])
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, height); ctx.stroke()
+    ctx.setLineDash([])
   }
 }
 
@@ -174,6 +199,9 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   const playOffsetRef = useRef<number>(0)
   const channelDataRef = useRef<Float32Array | null>(null)
   const peaksRef = useRef<Float32Array>(new Float32Array(0))
+  // Offscreen cache for drawStaticLayer's output — never attached to the
+  // DOM, just a backing bitmap compositeFrame blits from every frame.
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const animFrameRef = useRef<number>(0)
 
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null)
@@ -295,26 +323,60 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     peaksRef.current = computePeaks(channelData, vs, vs + 1 / vz, canvas.width)
   }, [])
 
-  // ─── Redraw (cheap) ─────────────────────────────────────────────────────
-  // Draws from the cached peaks above — safe to call every animation frame
-  // while the playhead is moving during playback.
-  const redraw = useCallback(() => {
+  // ─── Static layer (moderately expensive — peak bars, tints, ruler) ──────
+  // Rendered to the offscreen cache. Depends on everything drawStaticLayer
+  // draws EXCEPT the playhead — explicitly not `playheadSec`, so a playback
+  // tick never retriggers the full peak-bar redraw.
+  const drawStatic = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas || !channelDataRef.current) return
+    let staticCanvas = staticCanvasRef.current
+    if (!staticCanvas) {
+      staticCanvas = document.createElement('canvas')
+      staticCanvasRef.current = staticCanvas
+    }
+    if (staticCanvas.width !== canvas.width || staticCanvas.height !== canvas.height) {
+      staticCanvas.width = canvas.width
+      staticCanvas.height = canvas.height
+    }
     const dur = durationRef.current
     const vz = zoomRef.current
     const vs = clamp(viewOffsetRef.current, 0, 1 - 1 / vz)
-    drawWaveform(
-      canvas,
+    drawStaticLayer(
+      staticCanvas,
       peaksRef.current,
       dur > 0 ? startSecRef.current / dur : 0,
       dur > 0 ? endSecRef.current / dur : 1,
-      dur > 0 ? playheadSec / dur : 0,
       isDark,
       vs,
       vs + 1 / vz
     )
-  }, [isDark, playheadSec])
+  }, [isDark])
+
+  // ─── Composite (cheap) ───────────────────────────────────────────────────
+  // One drawImage blit of the cached static layer plus the playhead line —
+  // safe to call every animation frame while the playhead is moving during
+  // playback, unlike a full drawStatic.
+  const compositePlayhead = useCallback(() => {
+    const canvas = canvasRef.current
+    const staticCanvas = staticCanvasRef.current
+    if (!canvas || !staticCanvas || !channelDataRef.current) return
+    const dur = durationRef.current
+    const vz = zoomRef.current
+    const vs = clamp(viewOffsetRef.current, 0, 1 - 1 / vz)
+    compositeFrame(
+      canvas,
+      staticCanvas,
+      dur > 0 ? playheadSec / dur : 0,
+      vs,
+      vs + 1 / vz
+    )
+  }, [playheadSec])
+
+  const redraw = useCallback(() => {
+    drawStatic()
+    compositePlayhead()
+  }, [drawStatic, compositePlayhead])
 
   // Always-current redraw, for callers (the resize observer below) that
   // must NOT re-subscribe every time `redraw`'s identity changes — which it
@@ -325,7 +387,7 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
   // Peaks only need recomputing when the audio data or the view window
   // changes — not on every playhead tick (60/sec while playing) or while
   // dragging a trim handle, both of which only move overlays/lines that
-  // `redraw` draws on top of the cached peaks.
+  // compositePlayhead draws on top of the cached static layer.
   useEffect(() => {
     recomputePeaks()
     redraw()
@@ -335,8 +397,17 @@ export function SongTrimModal({ entry, onClose, onSaved }: SongTrimModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioBuffer, zoom, viewOffset])
 
-  // Cheap redraw for everything else — reuses the peaks cached above.
-  useEffect(() => { redraw() }, [startSec, endSec, playheadSec, duration, isDark, redraw])
+  // Static redraw for everything else that isn't the playhead — reuses the
+  // peaks cached above. Deliberately excludes playheadSec: that's the one
+  // dependency compositePlayhead (below) exists to isolate.
+  useEffect(() => {
+    drawStatic()
+    compositePlayhead()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startSec, endSec, duration, isDark, drawStatic])
+
+  // The per-frame path (60/sec during playback): blit + playhead line only.
+  useEffect(() => { compositePlayhead() }, [playheadSec, compositePlayhead])
 
   // ─── Canvas resize observer ───────────────────────────────────────────
   // Keyed on isLoading/loadError (which gate whether <canvas> is even in the
