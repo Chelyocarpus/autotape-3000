@@ -37,8 +37,12 @@ const TabsContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
+    // Kept mounted (rather than the Radix default of unmounting inactive
+    // content) so switching tabs doesn't reset component state or re-fire
+    // IPC calls every time — inactive content is hidden via CSS instead.
+    forceMount
     className={cn(
-      'ring-offset-zinc-950 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:ring-offset-2',
+      'ring-offset-zinc-950 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:ring-offset-2 data-[state=inactive]:hidden',
       className
     )}
     {...props}
