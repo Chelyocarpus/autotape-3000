@@ -57,7 +57,7 @@
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "png-to-ico": "^3.0.2",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
